@@ -17,9 +17,9 @@ export function namesFor(address: string): string[] {
 
 const isIp = (host: string) => /^\d+\.\d+\.\d+\.\d+$/.test(host);
 
-function available(bin: string) {
+function available(bin: string, probe: string) {
 	try {
-		execFileSync(bin, ['-version'], { stdio: 'ignore' });
+		execFileSync(bin, [probe], { stdio: 'ignore' });
 		return true;
 	} catch {
 		return false;
@@ -29,7 +29,7 @@ function available(bin: string) {
 /** Self-signed certificate for `hosts`, cached under `dir`; mkcert when installed, else openssl. */
 export function ensureCert(hosts: string[], dir = cacheDir()): Cert {
 	const names = [...new Set(hosts)].sort();
-	const tool = available('mkcert') ? 'mkcert' : 'openssl';
+	const tool = available('mkcert', '-version') ? 'mkcert' : 'openssl';
 	const id = createHash('sha256')
 		.update(`${tool}\n${names.join('\n')}`)
 		.digest('hex')
@@ -42,7 +42,7 @@ export function ensureCert(hosts: string[], dir = cacheDir()): Cert {
 			execFileSync('mkcert', ['-key-file', keyFile, '-cert-file', certFile, ...names], {
 				stdio: 'ignore',
 			});
-		else if (available('openssl')) {
+		else if (available('openssl', 'version')) {
 			const san = names.map((h) => (isIp(h) ? `IP:${h}` : `DNS:${h}`)).join(',');
 			execFileSync(
 				'openssl',

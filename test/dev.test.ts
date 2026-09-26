@@ -84,7 +84,7 @@ function upstreamServer() {
 		socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), payload]));
 		socket.on('end', () => socket.end());
 	});
-	return server;
+	return server.unref();
 }
 
 const proxied = (target: string, extra: Partial<Parameters<typeof startDev>[0]> = {}) =>
