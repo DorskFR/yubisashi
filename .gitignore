@@ -1,0 +1,9 @@
+node_modules
+/dist
+/test-results
+/tmp
+/.qa
+.yubisashi/
+.env
+.env.*
+!.env.example

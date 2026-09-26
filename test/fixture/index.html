@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>fixture</title>
+	</head>
+	<body>
+		<main>
+			<h1>Season 1</h1>
+			<section class="episodes">
+				<div class="row"><span>Episode 1</span> <button class="retry s-BUJUVtHZo5xi svelte-1x2y3z" type="button">Retry import</button></div>
+				<div class="row"><span>Episode 2</span> <button class="grab" type="button" disabled>Grab</button></div>
+			</section>
+			<div style="height: 3000px"></div>
+		</main>
+		<script>
+			// Mirrors what Svelte 5 attaches to elements in dev mode.
+			const root = { type: 'component', componentTag: 'Pyramid_0', file: '.svelte-kit/generated/root.svelte', line: 50, column: 7, parent: null };
+			const page = { type: 'component', componentTag: 'Page', file: 'src/routes/+layout.svelte', line: 5, column: 1, parent: root };
+			const each = { type: 'each', file: 'src/routes/+page.svelte', line: 28, column: 1, parent: page };
+			const row = { type: 'component', componentTag: 'EpisodeRow', file: 'src/routes/+page.svelte', line: 30, column: 2, parent: each };
+			const button = document.querySelector('button.retry');
+			button.__svelte_meta = { loc: { file: 'src/lib/EpisodeRow.svelte', line: 12, column: 4 }, parent: row };
+			button.parentElement.__svelte_meta = { loc: { file: 'src/lib/EpisodeRow.svelte', line: 10, column: 0 }, parent: row };
+			button.addEventListener('click', () => {
+				window.appClicks = (window.appClicks ?? 0) + 1;
+			});
+		</script>
+	</body>
+</html>

@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run lint
+      - run: npm run check
+      - run: npm test
+      # Idempotent: a re-run or a hand-published first version goes green.
+      # No `npm view` pre-check: the registry read endpoint lags minutes behind
+      # a publish and would turn the skip into a failed duplicate publish.
+      - name: Publish
+        run: |
+          if out=$(npm publish --provenance --access public 2>&1); then
+            echo "$out"
+          else
+            status=$?
+            echo "$out"
+            printf '%s' "$out" | grep -qi 'cannot publish over the previously published versions' || exit "$status"
+            echo 'Version already published, nothing to do.'
+          fi

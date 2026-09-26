@@ -1,0 +1,13 @@
+pre-commit:
+  parallel: true
+  commands:
+    biome:
+      glob: '*.{ts,js,mjs}'
+      run: npx biome check --no-errors-on-unmatched {staged_files}
+
+pre-push:
+  commands:
+    check:
+      run: npm run check
+    test:
+      run: npm test
