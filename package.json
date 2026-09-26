@@ -56,7 +56,7 @@
 		"check": "npm run build && tsc -p tsconfig.json && tsc -p cctui-plugin/tsconfig.json",
 		"lint": "biome check .",
 		"format": "biome check --write .",
-		"test": "npm run build && node --test test/*.test.ts && npm run test:cctui",
+		"test": "npm run build && node --test --test-timeout=60000 test/*.test.ts && npm run test:cctui",
 		"prepare": "lefthook install || true",
 		"prepublishOnly": "npm run build",
 		"test:cctui": "npm run build:cctui && vitest run --config cctui-plugin/vitest.config.ts",
