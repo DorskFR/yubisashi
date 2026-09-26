@@ -36,3 +36,23 @@ jobs:
             printf '%s' "$out" | grep -qi 'cannot publish over the previously published versions' || exit "$status"
             echo 'Version already published, nothing to do.'
           fi
+
+  plugin:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build:cctui
+      - name: Attach the cctui plugin to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "$tag" --generate-notes
+          gh release upload "$tag" dist-cctui/yubisashi-*.tgz --clobber

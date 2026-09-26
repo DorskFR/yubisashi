@@ -1,6 +1,6 @@
 {
 	"name": "@dorsk/yubisashi",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"description": "Point at elements of your running app from a review panel: an iframe picker, a Vite plugin and a `yubi dev` proxy that inject it in dev.",
 	"type": "module",
 	"license": "MIT",
@@ -53,12 +53,14 @@
 	},
 	"scripts": {
 		"build": "rm -rf dist && tsc -p tsconfig.build.json",
-		"check": "npm run build && tsc -p tsconfig.json",
+		"check": "npm run build && tsc -p tsconfig.json && tsc -p cctui-plugin/tsconfig.json",
 		"lint": "biome check .",
 		"format": "biome check --write .",
-		"test": "npm run build && node --test test/*.test.ts",
+		"test": "npm run build && node --test test/*.test.ts && npm run test:cctui",
 		"prepare": "lefthook install || true",
-		"prepublishOnly": "npm run build"
+		"prepublishOnly": "npm run build",
+		"test:cctui": "npm run build:cctui && vitest run --config cctui-plugin/vitest.config.ts",
+		"build:cctui": "node cctui-plugin/scripts/build.ts"
 	},
 	"peerDependencies": {
 		"vite": ">=5"
@@ -70,13 +72,16 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.12",
+		"@dorsk/tsumikit": "^0.61.0",
 		"@sveltejs/kit": "^2.70.3",
 		"@sveltejs/vite-plugin-svelte": "^7.3.1",
 		"@types/node": "^22.18.0",
+		"happy-dom": "^20.10.6",
 		"lefthook": "^2.1.12",
 		"playwright": "^1.55.0",
-		"svelte": "^5.57.1",
+		"svelte": "5.56.8",
 		"typescript": "^5.9.0",
-		"vite": "^8.3.1"
+		"vite": "^8.3.1",
+		"vitest": "^4.1.9"
 	}
 }

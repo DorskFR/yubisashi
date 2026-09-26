@@ -26,6 +26,9 @@ review panel may frame. It:
   dev server for identity encoding, decompressing when it insists), drops `X-Frame-Options` and
   rewrites CSP `frame-ancestors` to the `--parent-origin` list (repeatable, or
   `YUBI_PARENT_ORIGIN` comma-separated);
+- over HTTPS, rewrites the app's cookies to `SameSite=None; Secure; Partitioned`: the review
+  panel is another site, and browsers drop `Lax`/`Strict` and unpartitioned cookies in a
+  cross-site frame, which would log the app out inside the pane;
 - listens on `127.0.0.1` only unless told otherwise. To reach it from another device, bind the
   interface you choose with `--host ADDRESS` (or `YUBI_HOST`); nothing scans the machine's
   interfaces, and only the address you configure is printed or put in a certificate;
@@ -126,6 +129,35 @@ App → parent:
 `Target`: `tag`, `selector`, `text`, `html`, `attrs`, `rect`, `source?: { file, line, column }`,
 `stack: Frame[]` (the components that rendered it). Types and the `isParentMessage` /
 `isChildMessage` guards are exported from `@dorsk/yubisashi/picker`.
+
+## cctui plugin
+
+The same picker as a [cctui](https://github.com/DorskFR/cctui) runtime plugin: a **Review** pane
+next to the conversation that frames the app served by `yubi dev`, and an "Open in Review" action
+on every assistant line of the form `yubisashi: <url>`. Picked elements land in the composer as
+`[yubisashi #N]` blocks. The plugin ships the `yubisashi` skill so the agent knows how to start
+the proxy.
+
+Install it on the cctui server:
+
+1. Download `yubisashi-<version>.tgz` from the
+   [release](https://github.com/DorskFR/yubisashi/releases) and extract it into the server's
+   `CCTUI_PLUGINS_DIR`: `tar -xzf yubisashi-<version>.tgz -C "$CCTUI_PLUGINS_DIR"` (it creates
+   `yubisashi/plugin.json`, `yubisashi/web/index.js` and `yubisashi/skills/yubisashi/SKILL.md`).
+2. Rescan (`POST /api/v1/plugins/rescan` as an admin, or restart the server).
+3. In cctui, open Settings → Plugins, enable **Review** and fill the settings you need. Each one
+   reaches your agent sessions as an environment variable that `yubi dev` reads:
+
+   | setting                | env               | meaning                                             |
+   | ---------------------- | ----------------- | --------------------------------------------------- |
+   | Bind address           | `YUBI_HOST`       | address the proxy listens on (default: this machine only) |
+   | Advertised host name   | `YUBI_ADVERTISE`  | host name printed in the review URL                 |
+   | TLS certificate path   | `YUBI_TLS_CERT`   | PEM certificate on the session machine              |
+   | TLS key path           | `YUBI_TLS_KEY`    | PEM key on the session machine                      |
+
+The plugin is built from `cctui-plugin/` with `npm run build:cctui` into `dist-cctui/` (the
+folder plus the tarball). It imports Svelte and Tsumikit from the host's `/plugin-runtime/*`, so
+it is compiled against the Svelte version the cctui webui ships.
 
 ## Develop
 

@@ -6,7 +6,15 @@
 		"useIgnoreFile": true
 	},
 	"files": {
-		"includes": ["src/**/*.ts", "test/*.ts", "test/fixture-vite/**/*.js", "*.ts"]
+		"includes": [
+			"src/**/*.ts",
+			"test/*.ts",
+			"test/fixture-vite/**/*.js",
+			"*.ts",
+			"cctui-plugin/**/*.ts",
+			".qa/integration/*.mjs",
+			".qa/integration/*.js"
+		]
 	},
 	"formatter": {
 		"enabled": true,

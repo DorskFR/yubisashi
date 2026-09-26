@@ -39,6 +39,15 @@ function requestHeaders(req: IncomingMessage, target: URL, self: string) {
 	return headers;
 }
 
+/** The review panel is another site, so a framed app's cookies must be allowed cross-site (partitioned per panel). */
+export function frameCookie(cookie: string): string {
+	const kept = cookie
+		.split(';')
+		.map((part) => part.trim())
+		.filter((part) => part && !/^(samesite|secure|partitioned)\b/i.test(part));
+	return [...kept, 'SameSite=None', 'Secure', 'Partitioned'].join('; ');
+}
+
 function responseHeaders(
 	headers: IncomingMessage['headers'],
 	target: URL,
@@ -53,6 +62,8 @@ function responseHeaders(
 	}
 	if (typeof out.location === 'string' && out.location.startsWith(target.origin))
 		out.location = self + out.location.slice(target.origin.length);
+	if (self.startsWith('https:') && out['set-cookie'])
+		out['set-cookie'] = out['set-cookie'].map(frameCookie);
 	return out;
 }
 

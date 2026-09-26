@@ -61,6 +61,12 @@ function upstreamServer() {
 				return res
 					.writeHead(200, { 'content-type': 'text/javascript', ...frameHeaders })
 					.end('console.log("</head>")');
+			case '/login':
+				return res
+					.writeHead(204, {
+						'set-cookie': ['sid=1; Path=/; HttpOnly; SameSite=Lax', 'theme=dark; Secure'],
+					})
+					.end();
 			case '/redir':
 				return res.writeHead(302, { location: `http://${req.headers.host}/after` }).end();
 			default:
@@ -250,6 +256,48 @@ describe('https', () => {
 		try {
 			assert.deepEqual(dev.urls, [`https://dev.example.test:${dev.port}/`]);
 			assert.equal(await sanOf('127.0.0.1', dev.port), 'DNS:dev.example.test');
+		} finally {
+			await dev.close();
+			upstream.close();
+		}
+	});
+
+	test('makes the app cookies usable inside the cross-site frame over TLS', async () => {
+		const upstream = upstreamServer();
+		const target = await listen(upstream);
+		const dev = await proxied(target, { https: true, certDir: CERT_DIR });
+		try {
+			const cookies = await new Promise<string[]>((resolve, reject) =>
+				httpsRequest(
+					{ host: 'localhost', port: dev.port, path: '/login', rejectUnauthorized: false },
+					(res) => {
+						res.resume();
+						resolve(res.headers['set-cookie'] ?? []);
+					},
+				)
+					.on('error', reject)
+					.end(),
+			);
+			assert.deepEqual(cookies, [
+				'sid=1; Path=/; HttpOnly; SameSite=None; Secure; Partitioned',
+				'theme=dark; SameSite=None; Secure; Partitioned',
+			]);
+		} finally {
+			await dev.close();
+			upstream.close();
+		}
+	});
+
+	test('leaves cookies alone over plain HTTP', async () => {
+		const upstream = upstreamServer();
+		const target = await listen(upstream);
+		const dev = await proxied(target);
+		try {
+			const res = await fetch(`http://127.0.0.1:${dev.port}/login`);
+			assert.deepEqual(res.headers.getSetCookie(), [
+				'sid=1; Path=/; HttpOnly; SameSite=Lax',
+				'theme=dark; Secure',
+			]);
 		} finally {
 			await dev.close();
 			upstream.close();

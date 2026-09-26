@@ -20,4 +20,5 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run build
+      - run: npm run build:cctui
       - run: npm pack --dry-run
