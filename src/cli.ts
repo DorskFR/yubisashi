@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { startDev } from './dev.ts';
+import { findCctui, startDev } from './dev.ts';
 import { parentOrigins } from './frame.ts';
 
 const USAGE = `Usage: yubi dev [options] [-- <dev command>]
 
-Runs <dev command> (e.g. "npm run dev") and serves it through an HTTPS proxy that a review
-panel at --parent-origin may frame; the yubisashi picker is injected into every page.
+Runs <dev command> (e.g. "npm run dev") and serves it through a proxy that the yubisashi pane
+at --parent-origin may frame; the picker is injected into every page.
+
+Under cctui (cctui-daemon on PATH and CCTUI_SESSION_ID set) the proxy listens on loopback over
+plain HTTP and is published as a cctui preview of the session: the printed URL is the cctui one,
+--parent-origin defaults to CCTUI_WEB_ORIGIN and the TLS options are ignored.
 
 Options:
   --target URL           dev server URL (default: first localhost URL the command prints,
@@ -23,6 +27,7 @@ Options:
   --parent-origin O      origin allowed to frame the app; repeatable, or YUBI_PARENT_ORIGIN
                          (comma-separated). Required.
   --http                 plain HTTP instead of HTTPS
+  --no-cctui             serve locally even when running under cctui
   -h, --help
 `;
 
@@ -46,6 +51,7 @@ async function main(argv: string[]) {
 			key: { type: 'string' },
 			'parent-origin': { type: 'string', multiple: true },
 			http: { type: 'boolean', default: false },
+			'no-cctui': { type: 'boolean', default: false },
 			help: { type: 'boolean', short: 'h', default: false },
 		},
 		allowPositionals: true,
@@ -63,19 +69,27 @@ async function main(argv: string[]) {
 	if (positionals[0] !== 'dev' || positionals.length !== 1) fail(USAGE);
 	const port = Number(values.port);
 	if (!Number.isInteger(port) || port < 0 || port > 65535) fail(`invalid --port ${values.port}`);
+	const env = process.env;
+	const cctuiBin = values['no-cctui'] ? null : findCctui(env);
+	const cctui =
+		cctuiBin && env.CCTUI_SESSION_ID
+			? { bin: cctuiBin, sessionId: env.CCTUI_SESSION_ID }
+			: undefined;
+	const originArgs =
+		values['parent-origin'] ?? env.YUBI_PARENT_ORIGIN ?? (cctui ? env.CCTUI_WEB_ORIGIN : undefined);
 	let origins: string[];
 	try {
-		origins = parentOrigins(values['parent-origin']);
+		origins = parentOrigins(originArgs);
 	} catch (err) {
 		fail(`invalid --parent-origin: ${(err as Error).message}`);
 	}
 	if (!origins.length) fail(`--parent-origin (or YUBI_PARENT_ORIGIN) is required\n\n${USAGE}`);
 
-	const env = process.env;
-	const host = values.host || env.YUBI_HOST || '127.0.0.1';
+	const host = cctui ? '127.0.0.1' : values.host || env.YUBI_HOST || '127.0.0.1';
 	const advertise = values.advertise || env.YUBI_ADVERTISE || undefined;
-	const certFile = values.cert || env.YUBI_TLS_CERT;
-	const keyFile = values.key || env.YUBI_TLS_KEY;
+	const https = !values.http && !cctui;
+	const certFile = https ? values.cert || env.YUBI_TLS_CERT : undefined;
+	const keyFile = https ? values.key || env.YUBI_TLS_KEY : undefined;
 	if (!certFile !== !keyFile)
 		fail('--cert and --key (or YUBI_TLS_CERT and YUBI_TLS_KEY) go together');
 	let tls: { cert: Buffer; key: Buffer } | undefined;
@@ -100,15 +114,17 @@ async function main(argv: string[]) {
 		advertise,
 		tls,
 		origins,
-		https: !values.http,
+		https,
+		cctui,
 		log,
 	}).catch((err: Error) => fail(err.message));
 
 	for (const url of handle.urls) process.stdout.write(`yubisashi: ${url}\n`);
 	log(`yubisashi: framing allowed from ${origins.join(', ')}`);
-	if (!values.http && !tls)
+	if (cctui) log(`yubisashi: published as a cctui preview of session ${cctui.sessionId}`);
+	if (https && !tls)
 		log(
-			'yubisashi: the certificate is self-signed; open one of the URLs above in a browser tab and accept it once, then the review pane can frame it',
+			'yubisashi: the certificate is self-signed; open one of the URLs above in a browser tab and accept it once, then the yubisashi pane can frame it',
 		);
 
 	const stop = (code: number) => {

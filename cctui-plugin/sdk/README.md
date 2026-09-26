@@ -31,7 +31,7 @@ export default {
 	sessionPane: Pane,
 	messageActions: (msg) =>
 		/^yubisashi: (https?:\S+)/m.test(msg.text)
-			? [{ label: 'Open in Review', icon: 'eye', params: { url: RegExp.$1 }, open: 'sessionPane', autoOpen: true }]
+			? [{ label: 'Open in yubisashi', icon: 'eye', params: { url: RegExp.$1 }, open: 'sessionPane', autoOpen: true }]
 			: []
 } satisfies CctuiPluginModule;
 ```

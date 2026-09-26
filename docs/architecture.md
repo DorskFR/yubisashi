@@ -2,8 +2,8 @@
 
 Two halves, joined by `postMessage`:
 
-- **Review panel**: the `yubisashi` plugin in cctui. Frames the app, drives picking, holds the
-  comment threads and talks to the agent's session. Not in this repo.
+- **yubisashi pane**: the `yubisashi` plugin in cctui (`cctui-plugin/`). Frames the app, drives picking, holds the
+  pins and talks to the agent's session.
 - **App side** (this package):
   - `src/picker/` — runs inside the framed app document. A fixed glass layer takes clicks while
     picking, draws hover/selection boxes and comment pins, reads Svelte's dev-mode

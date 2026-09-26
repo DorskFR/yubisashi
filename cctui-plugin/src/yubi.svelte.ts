@@ -1,6 +1,6 @@
 import type { ComposerBridge, PluginSession } from '../sdk/types.ts';
 import { formatContextBlock } from './context.logic.ts';
-import { normalizeUrl, type PaneStatus, rememberedUrl, rememberUrl } from './pane.logic.ts';
+import { authUrl, listPreviews, matchPreview, newest, type Preview } from './previews.ts';
 import {
 	isTrustedEvent,
 	originOf,
@@ -11,11 +11,18 @@ import {
 	YUBI,
 } from './protocol.ts';
 
-/** State of one Review pane: the framed URL, the picker handshake, and the
- *  pins for every block dropped into the composer since the pane opened. */
+export type PaneStatus = 'idle' | 'loading' | 'waiting' | 'connected';
+
+/** State of one yubisashi pane: the session's cctui previews, the framed one,
+ *  the picker handshake, and the pins for every block dropped into the composer
+ *  since the pane opened. */
 export class YubiController {
+	previews = $state<Preview[]>([]);
+	selected = $state<Preview | null>(null);
+	/** Iframe src: the preview's `/__cctui/auth` URL carrying a fresh ticket. */
 	url = $state('');
-	draft = $state('');
+	error = $state('');
+	refreshing = $state(false);
 	status = $state<PaneStatus>('idle');
 	picking = $state(false);
 	route = $state('');
@@ -26,33 +33,79 @@ export class YubiController {
 	private readonly session: PluginSession;
 	private readonly composer: ComposerBridge;
 
-	constructor(session: PluginSession, composer: ComposerBridge, initialUrl = '') {
+	constructor(session: PluginSession, composer: ComposerBridge) {
 		this.session = session;
 		this.composer = composer;
-		const start = initialUrl || rememberedUrl(session.machine_id, session.working_dir);
-		this.draft = start;
-		if (start) this.load(start);
 	}
 
 	get origin(): string | null {
-		return originOf(this.url);
+		return this.selected ? originOf(this.selected.url) : null;
 	}
 
-	load(raw: string) {
-		const next = normalizeUrl(raw);
-		this.draft = next || raw;
-		rememberUrl(this.session.machine_id, this.session.working_dir, next);
-		this.url = next;
-		this.picking = false;
-		this.status = next ? 'loading' : 'idle';
-		this.epoch++;
+	/** Reload the preview list; frame `wanted` (a `yubisashi:` URL) when listed, else keep the
+	 *  current preview, else the newest. */
+	async refresh(wanted = '') {
+		this.refreshing = true;
+		this.error = '';
+		try {
+			this.previews = await listPreviews(this.session.id);
+		} catch (err) {
+			this.error = (err as Error).message;
+			this.refreshing = false;
+			return;
+		}
+		this.refreshing = false;
+		const byUrl = wanted ? matchPreview(this.previews, wanted) : null;
+		const current = this.selected && this.previews.find((p) => p.id === this.selected?.id);
+		const next = byUrl ?? current ?? newest(this.previews);
+		if (next && next.id !== this.selected?.id) await this.select(next.id);
+		else if (!next) this.clear();
 	}
 
-	reload() {
-		if (!this.url) return;
+	async select(id: string) {
+		const preview = this.previews.find((p) => p.id === id);
+		if (!preview) return;
+		this.selected = preview;
+		await this.frameSelected();
+	}
+
+	async reload() {
+		if (this.selected) await this.frameSelected();
+	}
+
+	/** A fresh authenticated URL of the selected preview, for a new tab. */
+	async tabUrl(): Promise<string | null> {
+		if (!this.selected) return null;
+		try {
+			return await authUrl(this.session.id, this.selected);
+		} catch (err) {
+			this.error = (err as Error).message;
+			return null;
+		}
+	}
+
+	private async frameSelected() {
+		const preview = this.selected;
+		if (!preview) return;
 		this.picking = false;
 		this.status = 'loading';
-		this.epoch++;
+		this.error = '';
+		try {
+			const url = await authUrl(this.session.id, preview);
+			if (this.selected?.id !== preview.id) return;
+			this.url = url;
+			this.epoch++;
+		} catch (err) {
+			this.error = (err as Error).message;
+			this.status = 'idle';
+		}
+	}
+
+	private clear() {
+		this.selected = null;
+		this.url = '';
+		this.picking = false;
+		this.status = 'idle';
 	}
 
 	onFrameLoad() {

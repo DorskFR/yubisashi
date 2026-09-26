@@ -11,17 +11,24 @@ in-config alternative.
 ## Use without changing the app: `yubi dev`
 
 ```sh
-npx -y @dorsk/yubisashi dev --parent-origin https://cctui.example.com -- npm run dev
+npx -y @dorsk/yubisashi dev -- npm run dev
 ```
 
-Runs the dev command and serves it through a reverse proxy on `https://127.0.0.1:4780` that the
-review panel may frame. It:
+Under cctui (`cctui-daemon` on `PATH` and `CCTUI_SESSION_ID` set, as in every agent session)
+that is all: the proxy listens on loopback over plain HTTP, registers itself with
+`cctui-daemon preview open --port <port>` and prints the cctui preview URL, `yubisashi:
+https://cctui-pv-<id>.example.com/`, which the yubisashi pane frames through cctui's tunnel
+(cctui terminates TLS and authenticates the owner). The parent origin defaults to
+`CCTUI_WEB_ORIGIN`; `--no-cctui` opts out. On exit it runs `preview close`.
+
+Outside cctui, pass `--parent-origin https://cctui.example.com`. It then serves the app on
+`https://127.0.0.1:4780` for the pane to frame. In both modes it:
 
 - finds the dev server from the first `http://localhost:PORT` the command prints (Vite's
   `Local:` line), or takes `--target URL` (default `http://localhost:5173`); leave out
   `-- <command>` when the server is already running;
 - proxies HTTP and WebSocket upgrades (HMR keeps working), rewriting `Host`/`Origin`/`Referer`
-  toward the dev server and `Location` redirects back to the proxy;
+  toward the dev server and `Location` redirects to the app origin into relative ones;
 - injects `<script type="module" src="/__yubi/picker.js">` into every HTML response (asking the
   dev server for identity encoding, decompressing when it insists), drops `X-Frame-Options` and
   rewrites CSP `frame-ancestors` to the `--parent-origin` list (repeatable, or
@@ -44,7 +51,7 @@ Keep machine-specific settings (`YUBI_HOST`, `YUBI_ADVERTISE`, `YUBI_TLS_*`, `YU
 in your own environment, not in the project.
 
 When ready it prints the URL, `yubisashi: https://<host>:4780/`, which cctui
-picks up to open the Review pane. The proxy serves only the app and the picker; there is no API
+picks up to open the yubisashi pane. The proxy serves only the app and the picker; there is no API
 and no token. `Ctrl-C` (or stopping the background task) kills the dev command with it.
 
 The package also ships `skill/SKILL.md`, a Claude Code skill describing the review loop for an
@@ -69,8 +76,8 @@ export default defineConfig({
 YUBI_PARENT_ORIGIN=https://cctui.example.com npm run dev
 ```
 
-Then in cctui: **Settings → Plugins → yubisashi**, open the **Review** pane and point it at the
-dev server. Press `C` or the ⌖ button, click an element (shift-click adds more, `Esc` backs
+The yubisashi pane frames only cctui previews, so publish the dev server with
+`cctui-daemon preview open --port <port>` (or use `yubi dev`, which does it for you). Press `C` or the ⌖ button, click an element (shift-click adds more, `Esc` backs
 out) and write the comment.
 
 The plugin only runs under `vite dev` (`apply: 'serve'`) and does nothing at all unless
@@ -132,11 +139,13 @@ App → parent:
 
 ## cctui plugin
 
-The same picker as a [cctui](https://github.com/DorskFR/cctui) runtime plugin: a **Review** pane
-next to the conversation that frames the app served by `yubi dev`, and an "Open in Review" action
-on every assistant line of the form `yubisashi: <url>`. Picked elements land in the composer as
-`[yubisashi #N]` blocks. The plugin ships the `yubisashi` skill so the agent knows how to start
-the proxy.
+The same picker as a [cctui](https://github.com/DorskFR/cctui) runtime plugin: a **yubisashi**
+pane next to the conversation that lists the session's cctui previews
+(`GET /api/v1/sessions/{id}/previews`), frames the newest through a single-use ticket
+(`/__cctui/auth?ticket=…`) and offers a selector when there are several, and an "Open in
+yubisashi" action on every assistant line of the form `yubisashi: <url>` that selects the matching
+preview. Picked elements land in the composer as `[yubisashi #N]` blocks. The plugin ships the
+`yubisashi` skill so the agent knows how to start the proxy.
 
 Install it on the cctui server:
 
@@ -145,15 +154,8 @@ Install it on the cctui server:
    `CCTUI_PLUGINS_DIR`: `tar -xzf yubisashi-<version>.tgz -C "$CCTUI_PLUGINS_DIR"` (it creates
    `yubisashi/plugin.json`, `yubisashi/web/index.js` and `yubisashi/skills/yubisashi/SKILL.md`).
 2. Rescan (`POST /api/v1/plugins/rescan` as an admin, or restart the server).
-3. In cctui, open Settings → Plugins, enable **Review** and fill the settings you need. Each one
-   reaches your agent sessions as an environment variable that `yubi dev` reads:
-
-   | setting                | env               | meaning                                             |
-   | ---------------------- | ----------------- | --------------------------------------------------- |
-   | Bind address           | `YUBI_HOST`       | address the proxy listens on (default: this machine only) |
-   | Advertised host name   | `YUBI_ADVERTISE`  | host name printed in the review URL                 |
-   | TLS certificate path   | `YUBI_TLS_CERT`   | PEM certificate on the session machine              |
-   | TLS key path           | `YUBI_TLS_KEY`    | PEM key on the session machine                      |
+3. In cctui, open Settings → Plugins and enable **yubisashi**. Nothing else to configure:
+   `yubi dev` finds `cctui-daemon` and the session on its own.
 
 The plugin is built from `cctui-plugin/` with `npm run build:cctui` into `dist-cctui/` (the
 folder plus the tarball). It imports Svelte and Tsumikit from the host's `/plugin-runtime/*`, so

@@ -1,6 +1,8 @@
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess, execFile, spawn } from 'node:child_process';
+import { accessSync, constants } from 'node:fs';
 import { createServer as createHttpServer, type Server } from 'node:http';
 import { type AddressInfo, createServer as createNetServer } from 'node:net';
+import { delimiter, join } from 'node:path';
 import { createSecureContext, type SecureContext, TLSSocket } from 'node:tls';
 import { cacheDir, ensureCert, namesFor } from './cert.ts';
 import { createProxy } from './proxy.ts';
@@ -22,7 +24,45 @@ export type DevOptions = {
 	childOutput?: NodeJS.WritableStream | null;
 	detectTimeout?: number;
 	readyTimeout?: number;
+	/** Publish the proxy as a cctui preview of this session instead of printing local URLs. */
+	cctui?: CctuiOptions;
 };
+
+export type CctuiOptions = { sessionId: string; bin?: string };
+
+export const CCTUI_BIN = 'cctui-daemon';
+
+/** Path of `cctui-daemon` when it is on PATH, else null. */
+export function findCctui(env: NodeJS.ProcessEnv = process.env): string | null {
+	for (const dir of (env.PATH ?? '').split(delimiter)) {
+		if (!dir) continue;
+		const file = join(dir, CCTUI_BIN);
+		try {
+			accessSync(file, constants.X_OK);
+			return file;
+		} catch {}
+	}
+	return null;
+}
+
+function cctuiPreview(bin: string, action: 'open' | 'close', port: number, sessionId: string) {
+	return new Promise<string>((resolve, reject) => {
+		execFile(
+			bin,
+			['preview', action, '--port', String(port), '--session', sessionId],
+			{ timeout: 30000 },
+			(err, stdout, stderr) => {
+				if (err)
+					reject(
+						new Error(
+							`yubisashi: ${CCTUI_BIN} preview ${action} failed: ${stderr.trim() || err.message}`,
+						),
+					);
+				else resolve(stdout.trim());
+			},
+		);
+	});
+}
 
 export type DevHandle = {
 	target: URL;
@@ -197,12 +237,26 @@ export async function startDev(options: DevOptions): Promise<DevHandle> {
 		server.listen(port, host, resolve);
 	});
 	const bound = (server.address() as AddressInfo).port;
-	const urls = reachableUrls(host, bound, https ? 'https' : 'http', options.advertise);
+	const cctui = options.cctui && {
+		bin: options.cctui.bin ?? CCTUI_BIN,
+		sessionId: options.cctui.sessionId,
+	};
+	let urls: string[];
+	if (cctui) {
+		try {
+			urls = [await cctuiPreview(cctui.bin, 'open', bound, cctui.sessionId)];
+		} catch (err) {
+			killTree(child);
+			server.close();
+			throw err;
+		}
+	} else urls = reachableUrls(host, bound, https ? 'https' : 'http', options.advertise);
 
 	let closed = false;
 	const close = async () => {
 		if (closed) return;
 		closed = true;
+		if (cctui) await cctuiPreview(cctui.bin, 'close', bound, cctui.sessionId).catch(() => {});
 		killTree(child);
 		proxy.close();
 		app.closeAllConnections();

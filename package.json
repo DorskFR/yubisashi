@@ -1,6 +1,6 @@
 {
 	"name": "@dorsk/yubisashi",
-	"version": "0.4.0",
+	"version": "0.5.0",
 	"description": "Point at elements of your running app from a review panel: an iframe picker, a Vite plugin and a `yubi dev` proxy that inject it in dev.",
 	"type": "module",
 	"license": "MIT",

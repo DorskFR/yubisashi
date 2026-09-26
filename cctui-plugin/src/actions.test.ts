@@ -22,18 +22,18 @@ describe('reviewUrls', () => {
 });
 
 describe('messageActions', () => {
-	it('returns one Open in Review action per URL, auto-opening the first only', () => {
+	it('returns one Open in yubisashi action per URL, auto-opening the first only', () => {
 		const actions = messageActions({ role: 'assistant', text });
 		expect(actions).toEqual([
 			{
-				label: 'Open in Review',
+				label: 'Open in yubisashi',
 				icon: 'eye',
 				params: { url: 'https://review.example.com:4780/' },
 				open: 'sessionPane',
 				autoOpen: true,
 			},
 			{
-				label: 'Open in Review',
+				label: 'Open in yubisashi',
 				icon: 'eye',
 				params: { url: 'http://localhost:4780/' },
 				open: 'sessionPane',

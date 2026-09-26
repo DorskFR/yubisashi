@@ -1,19 +1,13 @@
 <script lang="ts">
-	import { Badge, IconButton, Input, Text, Toolbar } from '@dorsk/tsumikit';
-	import { getContext } from 'svelte';
-	import { HOST_CONTEXT_KEY, type HostContext, type PaneProps } from '../sdk/types.ts';
+	import { Badge, IconButton, Select, Text, Toolbar } from '@dorsk/tsumikit';
+	import type { PaneProps } from '../sdk/types.ts';
 	import { messages as m } from './messages.ts';
-	import { isMixedContent } from './pane.logic.ts';
 	import { YubiController } from './yubi.svelte.ts';
 
 	let { session, composer, params, onclose }: PaneProps = $props();
 
-	const host = getContext<HostContext | undefined>(HOST_CONTEXT_KEY);
-	const parentOrigin = host?.origin || (typeof location === 'undefined' ? '' : location.origin);
-
 	// svelte-ignore state_referenced_locally
-	const ctl = new YubiController(session, composer, params.url ?? '');
-	const mixed = $derived(typeof location !== 'undefined' && isMixedContent(ctl.url, location.protocol));
+	const ctl = new YubiController(session, composer);
 
 	const statusText = $derived.by(() => {
 		if (ctl.picking) return m.statusPicking;
@@ -23,7 +17,7 @@
 			case 'loading':
 				return m.statusLoading;
 			case 'waiting':
-				return m.statusWaiting(parentOrigin);
+				return m.statusWaiting;
 			case 'connected':
 				return m.statusConnected;
 		}
@@ -31,13 +25,15 @@
 	const statusTone = $derived(
 		ctl.status === 'connected' ? 'ok' : ctl.status === 'waiting' ? 'warn' : 'neutral'
 	);
+	const options = $derived(
+		ctl.previews.map((p) => ({ value: p.id, label: m.preview(p.port), hint: new URL(p.url).host }))
+	);
 
-	// svelte-ignore state_referenced_locally
-	let applied = params.url;
+	let applied: string | undefined;
 	$effect(() => {
 		if (params.url === applied) return;
 		applied = params.url;
-		if (params.url) ctl.load(params.url);
+		void ctl.refresh(params.url ?? '');
 	});
 
 	function onKey(e: KeyboardEvent) {
@@ -49,8 +45,12 @@
 		ctl.togglePick();
 	}
 
-	function openTab() {
-		if (ctl.url) window.open(ctl.url, '_blank', 'noopener');
+	async function openTab() {
+		const tab = window.open('', '_blank');
+		const url = await ctl.tabUrl();
+		if (!tab) return;
+		if (url) tab.location.href = url;
+		else tab.close();
 	}
 </script>
 
@@ -60,19 +60,28 @@
 <section class="yubi" data-journey="yubisashi" aria-label={m.name} onkeydown={onKey}>
 	<Toolbar density="compact">
 		<IconButton icon="x" box="sm" label={m.close} onclick={onclose} />
-		<div class="url">
-			<Input
-				bind:value={ctl.draft}
-				type="url"
-				placeholder={m.urlPlaceholder}
-				aria-label={m.urlLabel}
-				onenter={(v) => ctl.load(v)}
-				data-journey="url"
-			/>
+		<div class="preview">
+			{#if ctl.previews.length > 1}
+				<Select
+					size="sm"
+					{options}
+					value={ctl.selected?.id ?? ''}
+					aria-label={m.previewLabel}
+					onchange={(e) => ctl.select((e.currentTarget as HTMLSelectElement).value)}
+					data-journey="preview"
+				/>
+			{/if}
 		</div>
-		<IconButton icon="arrow-right" box="sm" label={m.load} onclick={() => ctl.load(ctl.draft)} />
-		<IconButton icon="retry" box="sm" label={m.reload} disabled={!ctl.url} onclick={() => ctl.reload()} />
-		<IconButton icon="external" box="sm" label={m.openTab} disabled={!ctl.url} onclick={openTab} />
+		<IconButton
+			icon="retry"
+			box="sm"
+			label={m.refresh}
+			disabled={ctl.refreshing}
+			data-journey="refresh"
+			onclick={() => ctl.refresh()}
+		/>
+		<IconButton icon="refresh" box="sm" label={m.reload} disabled={!ctl.selected} onclick={() => ctl.reload()} />
+		<IconButton icon="external" box="sm" label={m.openTab} disabled={!ctl.selected} onclick={openTab} />
 		<IconButton
 			icon="text-cursor"
 			box="sm"
@@ -87,14 +96,14 @@
 	</Toolbar>
 	<div class="status" data-journey="status" data-status={ctl.status}>
 		<Badge tone={statusTone} size="sm">{ctl.route || '—'}</Badge>
-		<Text size="sm" tone="faint">{statusText}</Text>
+		<Text size="sm" tone="faint">{ctl.selected ? statusText : m.empty}</Text>
 		{#if ctl.pins.length}
 			<Badge tone="accent" size="sm">{m.pins(ctl.pins.length)}</Badge>
 		{/if}
 	</div>
-	{#if mixed}
-		<div class="hint">
-			<Text size="sm" tone="warn">{m.mixedContent}</Text>
+	{#if ctl.error}
+		<div class="hint" role="alert">
+			<Text size="sm" tone="danger">{ctl.error}</Text>
 		</div>
 	{/if}
 	<div class="frame">
@@ -121,7 +130,7 @@
 		background: var(--bg);
 		border-right: 1px solid var(--border);
 	}
-	.url {
+	.preview {
 		flex: 1 1 auto;
 		min-width: 0;
 	}

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer as createHttpServer, type Server } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import type { AddressInfo } from 'node:net';
@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { type Browser, chromium } from 'playwright';
 import { createServer as createVite } from 'vite';
-import { type DevHandle, detectUrl, startDev } from '../dist/dev.js';
+import { type DevHandle, detectUrl, findCctui, startDev } from '../dist/dev.js';
 import type { ChildMessage } from '../dist/picker/index.js';
 
 const PARENT = 'https://review.example';
@@ -147,10 +147,10 @@ describe('http proxy', () => {
 		assert.equal(res.headers.get('x-frame-options'), null);
 	});
 
-	test('rewrites redirects back to the proxy', async () => {
+	test('rewrites redirects to the app origin as relative ones', async () => {
 		const res = await fetch(`${origin}/redir`, { redirect: 'manual' });
 		assert.equal(res.status, 302);
-		assert.equal(res.headers.get('location'), `${origin}/after`);
+		assert.equal(res.headers.get('location'), '/after');
 	});
 
 	test('serves the picker bootstrap and its modules', async () => {
@@ -373,6 +373,62 @@ server.listen(0, '127.0.0.1', () => {
 		await dev.close();
 		await new Promise((r) => setTimeout(r, 200));
 		assert.throws(() => process.kill(pid, 0), 'child still alive after close');
+	});
+});
+
+describe('cctui preview', () => {
+	const bin = mkdtempSync(join(tmpdir(), 'yubi-cctui-'));
+	const log = join(bin, 'calls.log');
+	writeFileSync(
+		join(bin, 'cctui-daemon'),
+		`#!/bin/sh\necho "$@" >> "${log}"\n[ "$2" = open ] && echo "https://cctui-pv-abc123.example.com/"\nexit 0\n`,
+	);
+	chmodSync(join(bin, 'cctui-daemon'), 0o755);
+	let upstream: Server;
+	let target: string;
+	before(async () => {
+		upstream = upstreamServer();
+		target = await listen(upstream);
+	});
+	after(() => new Promise((r) => upstream.close(r)));
+
+	test('findCctui looks the daemon up on PATH', () => {
+		assert.equal(findCctui({ PATH: `/nonexistent:${bin}` }), join(bin, 'cctui-daemon'));
+		assert.equal(findCctui({ PATH: '/nonexistent' }), null);
+		assert.equal(findCctui({}), null);
+	});
+
+	test('publishes the loopback proxy as a preview and closes it on exit', async () => {
+		const dev = await startDev({
+			target,
+			origins: [PARENT],
+			port: 0,
+			https: false,
+			cctui: { sessionId: 'sess-1', bin: join(bin, 'cctui-daemon') },
+		});
+		assert.deepEqual(dev.urls, ['https://cctui-pv-abc123.example.com/']);
+		const res = await fetch(`http://127.0.0.1:${dev.port}/`);
+		assert.match(await res.text(), PICKER_SCRIPT);
+		await dev.close();
+		assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n'), [
+			`preview open --port ${dev.port} --session sess-1`,
+			`preview close --port ${dev.port} --session sess-1`,
+		]);
+	});
+
+	test('fails to start when the daemon refuses', async () => {
+		writeFileSync(join(bin, 'broken'), '#!/bin/sh\necho "no such session" >&2\nexit 1\n');
+		chmodSync(join(bin, 'broken'), 0o755);
+		await assert.rejects(
+			startDev({
+				target,
+				origins: [PARENT],
+				port: 0,
+				https: false,
+				cctui: { sessionId: 'sess-1', bin: join(bin, 'broken') },
+			}),
+			/preview open failed: no such session/,
+		);
 	});
 });
 

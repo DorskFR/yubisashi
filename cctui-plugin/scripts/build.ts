@@ -15,7 +15,7 @@ export const FOLDER = join(OUT, PLUGIN_ID);
 
 export const manifest = (version: string) => ({
 	id: PLUGIN_ID,
-	name: 'Review',
+	name: 'yubisashi',
 	description:
 		'Frames your running dev app next to the conversation. Point at an element and its source location lands in the composer, ready for your comment.',
 	version,
@@ -23,22 +23,6 @@ export const manifest = (version: string) => ({
 	icon: 'eye',
 	web: 'web/index.js',
 	skills: [PLUGIN_ID],
-	settings: [
-		{ key: 'host', label: 'Bind address', env: 'YUBI_HOST', type: 'string' },
-		{ key: 'advertise', label: 'Advertised host name', env: 'YUBI_ADVERTISE', type: 'string' },
-		{
-			key: 'tlsCert',
-			label: 'TLS certificate path (on the session machine)',
-			env: 'YUBI_TLS_CERT',
-			type: 'string',
-		},
-		{
-			key: 'tlsKey',
-			label: 'TLS key path (on the session machine)',
-			env: 'YUBI_TLS_KEY',
-			type: 'string',
-		},
-	],
 });
 
 export async function buildPlugin(): Promise<{ folder: string; tarball: string }> {

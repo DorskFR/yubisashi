@@ -61,7 +61,7 @@ function responseHeaders(
 		if (typeof value === 'string') out[name] = relaxCsp(value, origins);
 	}
 	if (typeof out.location === 'string' && out.location.startsWith(target.origin))
-		out.location = self + out.location.slice(target.origin.length);
+		out.location = out.location.slice(target.origin.length) || '/';
 	if (self.startsWith('https:') && out['set-cookie'])
 		out['set-cookie'] = out['set-cookie'].map(frameCookie);
 	return out;

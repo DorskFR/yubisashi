@@ -16,7 +16,7 @@ export function reviewUrls(text: string): string[] {
 export function messageActions(msg: PluginMessage): MessageAction[] {
 	if (msg.role !== 'assistant') return [];
 	return reviewUrls(msg.text).map((url, i) => ({
-		label: messages.openInReview,
+		label: messages.openInYubisashi,
 		icon: 'eye',
 		params: { url },
 		open: 'sessionPane',

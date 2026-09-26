@@ -5,9 +5,6 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { buildPlugin, FOLDER, OUT } from './build.ts';
 
 const ID_RE = /^[a-z0-9-]{1,40}$/;
-const ENV_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
-const RESERVED =
-	/^(PATH|HOME|SHELL|USER|NODE_OPTIONS|(LD|DYLD|ANTHROPIC|CLAUDE|CCTUI|OPENAI|FIREWORKS)_.*|.*_PROXY)$/;
 const version = (
 	JSON.parse(readFileSync(join(OUT, '../package.json'), 'utf8')) as { version: string }
 ).version;
@@ -36,24 +33,12 @@ describe('dist-cctui', () => {
 		const m = JSON.parse(readFileSync(join(FOLDER, 'plugin.json'), 'utf8'));
 		expect(m.id).toMatch(ID_RE);
 		expect(m.id).toBe('yubisashi');
-		expect(m.name).toBe('Review');
+		expect(m.name).toBe('yubisashi');
 		expect(m.version).toBe(version);
 		expect(m.cctuiApi).toBe(1);
 		expect(m.web).toBe('web/index.js');
 		expect(m.skills).toEqual(['yubisashi']);
-		expect(m.settings.map((s: { env: string }) => s.env)).toEqual([
-			'YUBI_HOST',
-			'YUBI_ADVERTISE',
-			'YUBI_TLS_CERT',
-			'YUBI_TLS_KEY',
-		]);
-		for (const s of m.settings) {
-			expect(s.env).toMatch(ENV_RE);
-			expect(s.env).not.toMatch(RESERVED);
-			expect(s.type).toBe('string');
-			expect(s.key).toBeTruthy();
-			expect(s.label).toBeTruthy();
-		}
+		expect(m).not.toHaveProperty('settings');
 	});
 
 	it('leaves svelte and tsumikit to the host runtime', () => {
