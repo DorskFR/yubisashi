@@ -1,7 +1,7 @@
 {
 	"name": "@dorsk/yubisashi",
-	"version": "0.2.0",
-	"description": "Point at elements of your running app from a review panel: an iframe picker and the Vite plugin that injects it in dev.",
+	"version": "0.3.0",
+	"description": "Point at elements of your running app from a review panel: an iframe picker, a Vite plugin and a `yubi dev` proxy that inject it in dev.",
 	"type": "module",
 	"license": "MIT",
 	"author": "Dorsk <dorsk.dev@gmail.com>",
@@ -25,11 +25,15 @@
 		"devtools",
 		"coding-agent"
 	],
+	"bin": {
+		"yubi": "dist/cli.js"
+	},
 	"engines": {
 		"node": ">=22.18"
 	},
 	"files": [
-		"dist"
+		"dist",
+		"skill"
 	],
 	"sideEffects": false,
 	"exports": {

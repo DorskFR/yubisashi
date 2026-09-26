@@ -54,13 +54,13 @@ describe('helpers', () => {
 
 	test('injectScript prefers </head>, reuses a page nonce, and never leaves the page untouched', () => {
 		assert.match(
-			injectScript('<html><head></head><body></body></html>'),
+			injectScript('<html><head></head><body></body></html>', '/x.js'),
 			/<script[^>]+><\/script><\/head>/,
 		);
-		assert.match(injectScript('<body></body>'), /<script[^>]+><\/script><\/body>/);
-		assert.match(injectScript('hello'), /^hello<script/);
+		assert.match(injectScript('<body></body>', '/x.js'), /<script[^>]+><\/script><\/body>/);
+		assert.match(injectScript('hello', '/x.js'), /^hello<script/);
 		assert.match(
-			injectScript('<head><script nonce="abc">1</script></head>'),
+			injectScript('<head><script nonce="abc">1</script></head>', '/x.js'),
 			/<script type="module" nonce="abc" src=/,
 		);
 	});

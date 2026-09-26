@@ -5,9 +5,49 @@ source `file:line`, the component chain, the selector and your comment.
 
 The review panel lives in [cctui](https://github.com/DorskFR/cctui) as the opt-in **yubisashi**
 plugin. This package is the app side: a framework-free picker that runs inside the framed app,
-and a Vite plugin that injects it in dev.
+a `yubi dev` proxy that injects it without touching the app's config, and a Vite plugin as the
+in-config alternative.
 
-## Use
+## Use without changing the app: `yubi dev`
+
+```sh
+npx -y @dorsk/yubisashi dev --parent-origin https://cctui.example.com -- npm run dev
+```
+
+Runs the dev command and serves it through a reverse proxy on `https://127.0.0.1:4780` that the
+review panel may frame. It:
+
+- finds the dev server from the first `http://localhost:PORT` the command prints (Vite's
+  `Local:` line), or takes `--target URL` (default `http://localhost:5173`); leave out
+  `-- <command>` when the server is already running;
+- proxies HTTP and WebSocket upgrades (HMR keeps working), rewriting `Host`/`Origin`/`Referer`
+  toward the dev server and `Location` redirects back to the proxy;
+- injects `<script type="module" src="/__yubi/picker.js">` into every HTML response (asking the
+  dev server for identity encoding, decompressing when it insists), drops `X-Frame-Options` and
+  rewrites CSP `frame-ancestors` to the `--parent-origin` list (repeatable, or
+  `YUBI_PARENT_ORIGIN` comma-separated);
+- listens on `127.0.0.1` only unless told otherwise. To reach it from another device, bind the
+  interface you choose with `--host ADDRESS` (or `YUBI_HOST`); nothing scans the machine's
+  interfaces, and only the address you configure is printed or put in a certificate;
+- serves HTTPS with your certificate when given `--cert FILE --key FILE` (or `YUBI_TLS_CERT` /
+  `YUBI_TLS_KEY`), e.g. one from your own CA for a DNS name, printed with `--advertise NAME`
+  (or `YUBI_ADVERTISE`). Otherwise it generates one per local address, naming only the address
+  the browser connected to, with `mkcert` when it is on `PATH` (trusted by browsers that trust
+  its CA) or a self-signed one from `openssl`, cached in `${XDG_CACHE_HOME:-~/.cache}/yubisashi/`.
+  A self-signed certificate must be accepted once by opening the URL in a tab. `--http`
+  disables TLS (with a warning when not on loopback).
+
+Keep machine-specific settings (`YUBI_HOST`, `YUBI_ADVERTISE`, `YUBI_TLS_*`, `YUBI_PARENT_ORIGIN`)
+in your own environment, not in the project.
+
+When ready it prints the URL, `yubisashi: https://<host>:4780/`, which cctui
+picks up to open the Review pane. The proxy serves only the app and the picker; there is no API
+and no token. `Ctrl-C` (or stopping the background task) kills the dev command with it.
+
+The package also ships `skill/SKILL.md`, a Claude Code skill describing the review loop for an
+agent.
+
+## Use as a Vite plugin
 
 ```sh
 npm install --save-dev @dorsk/yubisashi
