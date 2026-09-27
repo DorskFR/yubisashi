@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Preview } from './previews.ts';
 import {
+	relativePath,
 	START_POLL_MS,
 	START_PROMPT,
 	START_TIMEOUT_MS,
@@ -87,7 +88,8 @@ describe('YubiController.refresh', () => {
 		expect(ctl.selected?.id).toBe('old000');
 		expect(ctl.url).toMatch(/ticket=t-4$/);
 		await ctl.reload();
-		expect(ctl.url).toMatch(/ticket=t-5$/);
+		expect(calls.at(-2)).toBe('GET /api/v1/sessions/s/previews');
+		expect(ctl.url).toMatch(/ticket=t-6$/);
 	});
 
 	it('clears the frame when no preview is left and surfaces API errors', async () => {
@@ -106,6 +108,36 @@ describe('YubiController.refresh', () => {
 		);
 		await ctl.refresh();
 		expect(ctl.error).toBe('previews: 401');
+	});
+});
+
+describe('relativePath', () => {
+	it('keeps typed addresses relative to the framed origin', () => {
+		expect(relativePath('')).toBe('/');
+		expect(relativePath('  /sessions ')).toBe('/sessions');
+		expect(relativePath('sessions?tab=1#top')).toBe('/sessions?tab=1#top');
+		expect(relativePath('https://evil.example/steal?x=1')).toBe('/steal?x=1');
+		expect(relativePath('//evil.example/steal')).toBe('/steal');
+	});
+
+	it('rejects non-http schemes', () => {
+		expect(relativePath('javascript:alert(1)')).toBeNull();
+		expect(relativePath('data:text/html,hi')).toBeNull();
+	});
+});
+
+describe('YubiController.navigate', () => {
+	it('moves the frame to the path on the preview origin and drops picking', async () => {
+		const { ctl, contentWindow } = await connected();
+		const assign = vi.fn();
+		(contentWindow as { location?: unknown }).location = { assign };
+		ctl.picking = true;
+		ctl.navigate('https://evil.example/sessions?tab=1');
+		expect(assign).toHaveBeenCalledWith('https://cctui-pv-abc123.example.com/sessions?tab=1');
+		expect(ctl.route).toBe('/sessions?tab=1');
+		expect(ctl.picking).toBe(false);
+		ctl.navigate('javascript:alert(1)');
+		expect(assign).toHaveBeenCalledTimes(1);
 	});
 });
 

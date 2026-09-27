@@ -18,6 +18,21 @@ export const START_PROMPT = 'start a yubisashi server now';
 export const START_POLL_MS = 2_000;
 export const START_TIMEOUT_MS = 180_000;
 
+/** The path (with query and hash) a typed address means inside the framed app. Any origin
+ *  is dropped so the frame stays on the preview; non-http schemes yield `null`. */
+export function relativePath(input: string): string | null {
+	const text = input.trim();
+	if (!text) return '/';
+	let url: URL;
+	try {
+		url = new URL(text, 'http://yubi.invalid');
+	} catch {
+		return null;
+	}
+	if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+	return url.pathname + url.search + url.hash;
+}
+
 /** Whether opening the pane should ask the agent to start a server: only when the host can
  *  send, nothing is framed yet, this pane never asked, and no request is pending. */
 export function shouldAutoStart(input: {
@@ -148,8 +163,21 @@ export class YubiController {
 		await this.frameSelected();
 	}
 
+	/** Re-list the previews, then frame the selected one again through a fresh ticket. */
 	async reload() {
+		await this.refresh();
 		if (this.selected) await this.frameSelected();
+	}
+
+	/** Point the framed app at `input`, kept on the preview's origin. */
+	navigate(input: string) {
+		const origin = this.origin;
+		const path = relativePath(input);
+		const win = this.frame?.contentWindow;
+		if (!origin || !win || path === null) return;
+		this.picking = false;
+		this.route = path;
+		win.location.assign(origin + path);
 	}
 
 	/** A fresh authenticated URL of the selected preview, for a new tab. */

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Badge, Button, IconButton, Select, Text, Toolbar } from '@dorsk/tsumikit';
+	import { Badge, Button, IconButton, Input, Select, Text, Toolbar } from '@dorsk/tsumikit';
 	import type { PaneProps } from '../sdk/types.ts';
 	import { messages as m } from './messages.ts';
 	import { YubiController } from './yubi.svelte.ts';
@@ -22,9 +22,7 @@
 				return m.statusConnected;
 		}
 	});
-	const statusTone = $derived(
-		ctl.status === 'connected' ? 'ok' : ctl.status === 'waiting' ? 'warn' : 'neutral'
-	);
+	let path = $derived(ctl.route);
 	const options = $derived(
 		ctl.previews.map((p) => ({ value: p.id, label: m.preview(p.port), hint: new URL(p.url).host }))
 	);
@@ -59,44 +57,81 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <section class="yubi" data-journey="yubisashi" aria-label={m.name} onkeydown={onKey}>
-	<Toolbar density="compact">
+	<Toolbar density="compact" label={m.name}>
 		<IconButton icon="x" box="sm" label={m.close} onclick={onclose} />
-		<div class="preview">
-			{#if ctl.previews.length > 1}
-				<Select
-					size="sm"
-					{options}
-					value={ctl.selected?.id ?? ''}
-					aria-label={m.previewLabel}
-					onchange={(e) => ctl.select((e.currentTarget as HTMLSelectElement).value)}
-					data-journey="preview"
-				/>
-			{/if}
+		{#if ctl.previews.length > 1}
+			<Select
+				size="sm"
+				{options}
+				value={ctl.selected?.id ?? ''}
+				aria-label={m.previewLabel}
+				onchange={(e) => ctl.select((e.currentTarget as HTMLSelectElement).value)}
+				data-journey="preview"
+			/>
+		{/if}
+		<Input
+			size="sm"
+			mono
+			grow
+			bind:value={path}
+			placeholder={m.pathPlaceholder}
+			aria-label={m.pathLabel}
+			disabled={!ctl.selected}
+			data-journey="path"
+			onenter={(v) => ctl.navigate(v)}
+		/>
+		<div class="actions">
+			<IconButton
+				icon="retry"
+				box="sm"
+				label={m.reload}
+				title={m.reload}
+				disabled={!ctl.selected || ctl.refreshing}
+				spin={ctl.refreshing}
+				data-journey="reload"
+				onclick={() => ctl.reload()}
+			/>
+			<IconButton
+				icon="external"
+				box="sm"
+				label={m.openTab}
+				title={m.openTab}
+				disabled={!ctl.selected}
+				onclick={openTab}
+			/>
+			<IconButton
+				box="sm"
+				variant={ctl.picking ? 'primary' : 'default'}
+				pressed={ctl.picking}
+				label={ctl.picking ? m.pickStop : m.pick}
+				title={`${ctl.picking ? m.pickStop : m.pick} — ${m.pickKey}`}
+				disabled={ctl.status !== 'connected'}
+				data-journey="pick"
+				onclick={() => ctl.togglePick()}
+			>
+				<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+			</IconButton>
 		</div>
-		<IconButton
-			icon="retry"
-			box="sm"
-			label={m.refresh}
-			disabled={ctl.refreshing}
-			data-journey="refresh"
-			onclick={() => ctl.refresh()}
-		/>
-		<IconButton icon="refresh" box="sm" label={m.reload} disabled={!ctl.selected} onclick={() => ctl.reload()} />
-		<IconButton icon="external" box="sm" label={m.openTab} disabled={!ctl.selected} onclick={openTab} />
-		<IconButton
-			icon="text-cursor"
-			box="sm"
-			variant={ctl.picking ? 'primary' : 'default'}
-			pressed={ctl.picking}
-			label={ctl.picking ? m.pickStop : m.pick}
-			title={m.pickKey}
-			disabled={ctl.status !== 'connected'}
-			data-journey="pick"
-			onclick={() => ctl.togglePick()}
-		/>
 	</Toolbar>
+	<div class="frame">
+		{#if ctl.url}
+			{#key ctl.epoch}
+				<iframe
+					bind:this={ctl.frame}
+					src={ctl.url}
+					title={m.frameTitle}
+					sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"
+					onload={() => ctl.onFrameLoad()}
+				></iframe>
+			{/key}
+		{/if}
+	</div>
+	{#if ctl.error}
+		<div class="hint" role="alert">
+			<Text size="sm" tone="danger">{ctl.error}</Text>
+		</div>
+	{/if}
 	<div class="status" data-journey="status" data-status={ctl.status}>
-		<Badge tone={statusTone} size="sm">{ctl.route || '—'}</Badge>
 		{#if ctl.selected}
 			<Text size="sm" tone="faint">{statusText}</Text>
 		{:else if ctl.boot === 'pending'}
@@ -111,24 +146,6 @@
 			<Badge tone="accent" size="sm">{m.pins(ctl.pins.length)}</Badge>
 		{/if}
 	</div>
-	{#if ctl.error}
-		<div class="hint" role="alert">
-			<Text size="sm" tone="danger">{ctl.error}</Text>
-		</div>
-	{/if}
-	<div class="frame">
-		{#if ctl.url}
-			{#key ctl.epoch}
-				<iframe
-					bind:this={ctl.frame}
-					src={ctl.url}
-					title={m.frameTitle}
-					sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"
-					onload={() => ctl.onFrameLoad()}
-				></iframe>
-			{/key}
-		{/if}
-	</div>
 </section>
 
 <style>
@@ -140,22 +157,24 @@
 		background: var(--bg);
 		border-right: 1px solid var(--border);
 	}
-	.preview {
-		flex: 1 1 auto;
-		min-width: 0;
+	.actions {
+		display: flex;
+		align-items: center;
+		gap: var(--sp-1);
+		flex: none;
 	}
 	.status {
 		display: flex;
 		align-items: center;
 		gap: var(--sp-2);
 		padding: var(--sp-1) var(--sp-2);
-		border-bottom: 1px solid var(--border);
+		border-top: 1px solid var(--border);
 		min-width: 0;
 		flex-wrap: wrap;
 	}
 	.hint {
 		padding: var(--sp-1) var(--sp-2);
-		border-bottom: 1px solid var(--border);
+		border-top: 1px solid var(--border);
 	}
 	.frame {
 		flex: 1 1 auto;
