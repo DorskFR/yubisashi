@@ -1,7 +1,13 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Preview } from './previews.ts';
-import { YubiController } from './yubi.svelte.ts';
+import {
+	START_POLL_MS,
+	START_PROMPT,
+	START_TIMEOUT_MS,
+	shouldAutoStart,
+	YubiController,
+} from './yubi.svelte.ts';
 
 const PREVIEW: Preview = {
 	id: 'abc123',
@@ -125,5 +131,92 @@ describe('YubiController.post', () => {
 			{ yubi: 1, type: 'pick:clear', id: 1 },
 			{ yubi: 1, type: 'pins:set', pins: [{ id: 1, selector: 'body > h1' }] },
 		]);
+	});
+});
+
+describe('shouldAutoStart', () => {
+	const base = { previews: 0, error: '', canSend: true, sent: false, boot: 'idle' as const };
+	it('asks only when the host can send, nothing is listed, and nothing was asked yet', () => {
+		expect(shouldAutoStart(base)).toBe(true);
+		expect(shouldAutoStart({ ...base, previews: 1 })).toBe(false);
+		expect(shouldAutoStart({ ...base, canSend: false })).toBe(false);
+		expect(shouldAutoStart({ ...base, sent: true })).toBe(false);
+		expect(shouldAutoStart({ ...base, boot: 'pending' })).toBe(false);
+		expect(shouldAutoStart({ ...base, error: 'previews: 500' })).toBe(false);
+	});
+});
+
+describe('YubiController.open', () => {
+	const session = { id: 's', machine_id: 'm', working_dir: '/w' };
+	const bridge = () => ({ insertText: vi.fn(), addFiles: vi.fn(), focus: vi.fn(), send: vi.fn() });
+	afterEach(() => vi.useRealTimers());
+
+	it('sends the start prompt once when no preview exists and polls', async () => {
+		vi.useFakeTimers();
+		const composer = bridge();
+		const ctl = new YubiController(session, composer);
+		const calls = mockApi([]);
+		await ctl.open();
+		expect(composer.send).toHaveBeenCalledExactlyOnceWith(START_PROMPT);
+		expect(ctl.boot).toBe('pending');
+		await ctl.open();
+		expect(composer.send).toHaveBeenCalledTimes(1);
+		await vi.advanceTimersByTimeAsync(START_POLL_MS);
+		expect(calls.filter((c) => c.endsWith('/previews'))).toHaveLength(3);
+		ctl.destroy();
+	});
+
+	it('frames the preview that appears while polling', async () => {
+		vi.useFakeTimers();
+		const composer = bridge();
+		const ctl = new YubiController(session, composer);
+		const previews: Preview[] = [];
+		mockApi(previews);
+		await ctl.open();
+		await vi.advanceTimersByTimeAsync(START_POLL_MS);
+		expect(ctl.selected).toBeNull();
+		previews.push(PREVIEW);
+		await vi.advanceTimersByTimeAsync(START_POLL_MS);
+		expect(ctl.boot).toBe('idle');
+		expect(ctl.selected?.id).toBe('abc123');
+		expect(ctl.url).toContain('https://cctui-pv-abc123.example.com/__cctui/auth?ticket=');
+		await vi.advanceTimersByTimeAsync(START_POLL_MS * 3);
+		expect(composer.send).toHaveBeenCalledTimes(1);
+	});
+
+	it('times out after three minutes and lets a retry send again', async () => {
+		vi.useFakeTimers();
+		const composer = bridge();
+		const ctl = new YubiController(session, composer);
+		mockApi([]);
+		await ctl.open();
+		await vi.advanceTimersByTimeAsync(START_TIMEOUT_MS + START_POLL_MS);
+		expect(ctl.boot).toBe('timeout');
+		ctl.startServer();
+		expect(composer.send).toHaveBeenCalledTimes(2);
+		expect(ctl.boot).toBe('pending');
+		ctl.destroy();
+	});
+
+	it('sends nothing when a preview already exists', async () => {
+		const composer = bridge();
+		const ctl = new YubiController(session, composer);
+		mockApi([PREVIEW]);
+		await ctl.open();
+		expect(composer.send).not.toHaveBeenCalled();
+		expect(ctl.boot).toBe('idle');
+		expect(ctl.selected?.id).toBe('abc123');
+	});
+
+	it('falls back to the plain empty state on hosts without send', async () => {
+		const ctl = new YubiController(session, {
+			insertText: vi.fn(),
+			addFiles: vi.fn(),
+			focus: vi.fn(),
+		});
+		mockApi([]);
+		await ctl.open();
+		expect(ctl.boot).toBe('idle');
+		expect(ctl.selected).toBeNull();
 	});
 });

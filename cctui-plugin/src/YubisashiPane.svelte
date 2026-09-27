@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Badge, IconButton, Select, Text, Toolbar } from '@dorsk/tsumikit';
+	import { Badge, Button, IconButton, Select, Text, Toolbar } from '@dorsk/tsumikit';
 	import type { PaneProps } from '../sdk/types.ts';
 	import { messages as m } from './messages.ts';
 	import { YubiController } from './yubi.svelte.ts';
@@ -33,8 +33,9 @@
 	$effect(() => {
 		if (params.url === applied) return;
 		applied = params.url;
-		void ctl.refresh(params.url ?? '');
+		void ctl.open(params.url ?? '');
 	});
+	$effect(() => () => ctl.destroy());
 
 	function onKey(e: KeyboardEvent) {
 		if (e.key !== 'c' && e.key !== 'C') return;
@@ -96,7 +97,16 @@
 	</Toolbar>
 	<div class="status" data-journey="status" data-status={ctl.status}>
 		<Badge tone={statusTone} size="sm">{ctl.route || '—'}</Badge>
-		<Text size="sm" tone="faint">{ctl.selected ? statusText : m.empty}</Text>
+		{#if ctl.selected}
+			<Text size="sm" tone="faint">{statusText}</Text>
+		{:else if ctl.boot === 'pending'}
+			<Text size="sm" tone="faint">{m.starting}</Text>
+		{:else if ctl.boot === 'timeout'}
+			<Text size="sm" tone="danger">{m.startTimeout}</Text>
+			<Button size="sm" data-journey="retry-start" onclick={() => ctl.startServer()}>{m.retry}</Button>
+		{:else}
+			<Text size="sm" tone="faint">{m.empty}</Text>
+		{/if}
 		{#if ctl.pins.length}
 			<Badge tone="accent" size="sm">{m.pins(ctl.pins.length)}</Badge>
 		{/if}

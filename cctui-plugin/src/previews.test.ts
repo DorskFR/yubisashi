@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { authUrl, listPreviews, matchPreview, newest, type Preview } from './previews.ts';
+import {
+	authUrl,
+	listPreviews,
+	matchPreview,
+	newest,
+	normalizePreview,
+	type Preview,
+} from './previews.ts';
 
 const A: Preview = {
 	id: 'abc123',
@@ -40,6 +47,18 @@ describe('previews', () => {
 	it('reports failed calls', async () => {
 		await expect(listPreviews('s1', reply({}, 403))).rejects.toThrow('previews: 403');
 		await expect(authUrl('s1', A, reply({}, 404))).rejects.toThrow('ticket: 404');
+	});
+
+	it('reads the server camelCase openedAt and still accepts opened_at', () => {
+		const { opened_at: _, ...bare } = B;
+		expect(normalizePreview({ ...bare, openedAt: '2026-09-27T00:00:00Z' })).toEqual({
+			...bare,
+			opened_at: '2026-09-27T00:00:00Z',
+		});
+		expect(normalizePreview(B)).toEqual(B);
+		expect(newest([A, normalizePreview({ ...bare, openedAt: '2026-09-27T00:00:00Z' })])?.id).toBe(
+			B.id,
+		);
 	});
 
 	it('picks the newest preview and matches a printed URL by origin', () => {

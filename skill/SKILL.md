@@ -1,6 +1,6 @@
 ---
 name: yubisashi
-description: Use when the user wants to review a running web app visually and send you feedback by pointing at elements — "start me a dev server with yubisashi", "let me comment on the UI", "I'll show you what I don't like". Starts the app's dev server behind the yubisashi proxy so the cctui yubisashi pane can frame it, and turns the user's element picks into normal messages in this session.
+description: Use when the user wants to review a running web app visually and send you feedback by pointing at elements — "start a yubisashi server now" (sent by the cctui yubisashi pane when it opens with no preview), "start me a dev server with yubisashi", "let me comment on the UI", "I'll show you what I don't like". Starts the app's dev server behind the yubisashi proxy so the cctui yubisashi pane can frame it, and turns the user's element picks into normal messages in this session.
 ---
 
 # yubisashi: UI review loop
@@ -12,7 +12,9 @@ snippet.
 
 ## Start
 
-Run this as a **background** command from the app's directory, replacing `npm run dev` with
+On "start a yubisashi server now" (or any request to start a server with yubisashi), do this
+immediately and without asking questions; the pane is polling for the preview. Run this as a
+**background** command from the app's directory, replacing `npm run dev` with
 the project's dev command:
 
 ```sh

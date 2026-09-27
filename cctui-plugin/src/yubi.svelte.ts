@@ -12,6 +12,25 @@ import {
 } from './protocol.ts';
 
 export type PaneStatus = 'idle' | 'loading' | 'waiting' | 'connected';
+export type BootStatus = 'idle' | 'pending' | 'timeout';
+
+export const START_PROMPT = 'start a yubisashi server now';
+export const START_POLL_MS = 2_000;
+export const START_TIMEOUT_MS = 180_000;
+
+/** Whether opening the pane should ask the agent to start a server: only when the host can
+ *  send, nothing is framed yet, this pane never asked, and no request is pending. */
+export function shouldAutoStart(input: {
+	previews: number;
+	error: string;
+	canSend: boolean;
+	sent: boolean;
+	boot: BootStatus;
+}): boolean {
+	return (
+		input.canSend && !input.error && input.previews === 0 && !input.sent && input.boot !== 'pending'
+	);
+}
 
 /** State of one yubisashi pane: the session's cctui previews, the framed one,
  *  the picker handshake, and the pins for every block dropped into the composer
@@ -29,7 +48,11 @@ export class YubiController {
 	pins = $state<Pin[]>([]);
 	/** Bumped to remount the iframe (reload). */
 	epoch = $state(0);
+	/** Progress of the "start a server" request sent to the agent on open. */
+	boot = $state<BootStatus>('idle');
 	frame: HTMLIFrameElement | null = null;
+	private sent = false;
+	private pollTimer: ReturnType<typeof setTimeout> | null = null;
 	private readonly session: PluginSession;
 	private readonly composer: ComposerBridge;
 
@@ -40,6 +63,62 @@ export class YubiController {
 
 	get origin(): string | null {
 		return this.selected ? originOf(this.selected.url) : null;
+	}
+
+	get canSend(): boolean {
+		return typeof this.composer.send === 'function';
+	}
+
+	/** Pane opened: frame what exists, else (once) ask the agent to start a server. */
+	async open(wanted = '') {
+		await this.refresh(wanted);
+		const input = {
+			previews: this.previews.length,
+			error: this.error,
+			canSend: this.canSend,
+			sent: this.sent,
+			boot: this.boot,
+		};
+		if (shouldAutoStart(input)) this.startServer();
+	}
+
+	/** Send the start prompt and poll for a preview until one appears or the timeout passes. */
+	startServer() {
+		if (!this.canSend || this.boot === 'pending') return;
+		this.composer.send?.(START_PROMPT);
+		this.sent = true;
+		this.boot = 'pending';
+		this.error = '';
+		const deadline = Date.now() + START_TIMEOUT_MS;
+		const tick = async () => {
+			this.pollTimer = null;
+			if (this.boot !== 'pending') return;
+			try {
+				this.previews = await listPreviews(this.session.id);
+			} catch {
+				this.previews = [];
+			}
+			if (this.boot !== 'pending') return;
+			const next = newest(this.previews);
+			if (next) {
+				this.boot = 'idle';
+				await this.select(next.id);
+				return;
+			}
+			if (Date.now() >= deadline) {
+				this.boot = 'timeout';
+				return;
+			}
+			this.pollTimer = setTimeout(tick, START_POLL_MS);
+		};
+		this.pollTimer = setTimeout(tick, START_POLL_MS);
+	}
+
+	/** Stop polling when the pane unmounts. */
+	destroy() {
+		if (this.pollTimer) clearTimeout(this.pollTimer);
+		this.pollTimer = null;
+		if (this.boot === 'pending') this.boot = 'idle';
 	}
 
 	/** Reload the preview list; frame `wanted` (a `yubisashi:` URL) when listed, else keep the

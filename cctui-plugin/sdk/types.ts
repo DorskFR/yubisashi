@@ -21,6 +21,8 @@ export interface ComposerBridge {
 	insertText(text: string): void;
 	addFiles(files: File[]): void;
 	focus(): void;
+	/** Send text as a user message to the session now. Absent on older hosts. */
+	send?(text: string): void;
 }
 
 /** Props the host mounts a `sessionPane` with. `params` come from the message

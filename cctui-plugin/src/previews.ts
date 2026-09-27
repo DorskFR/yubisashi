@@ -3,6 +3,13 @@ import { originOf } from './protocol.ts';
 /** A dev server published through the cctui preview tunnel. */
 export type Preview = { id: string; port: number; url: string; opened_at: string };
 
+/** The server sends `openedAt`; older builds sent `opened_at`. */
+type RawPreview = Omit<Preview, 'opened_at'> & { openedAt?: string; opened_at?: string };
+
+export function normalizePreview({ openedAt, opened_at, ...rest }: RawPreview): Preview {
+	return { ...rest, opened_at: openedAt ?? opened_at ?? '' };
+}
+
 type Fetch = typeof fetch;
 
 const same = (fetchImpl?: Fetch): Fetch => fetchImpl ?? ((input, init) => fetch(input, init));
@@ -16,7 +23,7 @@ export async function listPreviews(sessionId: string, fetchImpl?: Fetch): Promis
 	const res = await same(fetchImpl)(`/api/v1/sessions/${encodeURIComponent(sessionId)}/previews`, {
 		credentials: 'same-origin',
 	});
-	return json<Preview[]>(res, 'previews');
+	return (await json<RawPreview[]>(res, 'previews')).map(normalizePreview);
 }
 
 /** The `/__cctui/auth` URL that logs the iframe into `preview` with a fresh single-use ticket. */
