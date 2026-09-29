@@ -134,6 +134,8 @@
 	<div class="status" data-journey="status" data-status={ctl.status}>
 		{#if ctl.selected}
 			<Text size="sm" tone="faint">{statusText}</Text>
+		{:else if ctl.disabled}
+			<Text size="sm" tone="faint">{m.previewsDisabled}</Text>
 		{:else if ctl.boot === 'pending'}
 			<Text size="sm" tone="faint">{m.starting}</Text>
 		{:else if ctl.boot === 'timeout'}

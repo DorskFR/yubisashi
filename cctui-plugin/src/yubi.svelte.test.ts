@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Preview } from './previews.ts';
+import { PREVIEWS_DISABLED, type Preview } from './previews.ts';
 import {
 	relativePath,
 	START_POLL_MS,
@@ -34,6 +34,13 @@ function mockApi(previews: Preview[]) {
 		}),
 	);
 	return calls;
+}
+
+function mockDisabled() {
+	vi.stubGlobal(
+		'fetch',
+		vi.fn(async () => Response.json({ error: PREVIEWS_DISABLED }, { status: 503 })),
+	);
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -167,7 +174,14 @@ describe('YubiController.post', () => {
 });
 
 describe('shouldAutoStart', () => {
-	const base = { previews: 0, error: '', canSend: true, sent: false, boot: 'idle' as const };
+	const base = {
+		previews: 0,
+		error: '',
+		canSend: true,
+		sent: false,
+		boot: 'idle' as const,
+		disabled: false,
+	};
 	it('asks only when the host can send, nothing is listed, and nothing was asked yet', () => {
 		expect(shouldAutoStart(base)).toBe(true);
 		expect(shouldAutoStart({ ...base, previews: 1 })).toBe(false);
@@ -175,6 +189,7 @@ describe('shouldAutoStart', () => {
 		expect(shouldAutoStart({ ...base, sent: true })).toBe(false);
 		expect(shouldAutoStart({ ...base, boot: 'pending' })).toBe(false);
 		expect(shouldAutoStart({ ...base, error: 'previews: 500' })).toBe(false);
+		expect(shouldAutoStart({ ...base, disabled: true })).toBe(false);
 	});
 });
 
@@ -237,6 +252,51 @@ describe('YubiController.open', () => {
 		await ctl.open();
 		expect(composer.send).not.toHaveBeenCalled();
 		expect(ctl.boot).toBe('idle');
+		expect(ctl.selected?.id).toBe('abc123');
+	});
+
+	it('shows the disabled refusal instead of waiting when previews are off', async () => {
+		vi.useFakeTimers();
+		const composer = bridge();
+		const ctl = new YubiController(session, composer);
+		mockDisabled();
+		await ctl.open();
+		expect(ctl.disabled).toBe(true);
+		expect(ctl.error).toBe(PREVIEWS_DISABLED);
+		expect(composer.send).not.toHaveBeenCalled();
+		expect(ctl.boot).toBe('idle');
+		await vi.advanceTimersByTimeAsync(START_TIMEOUT_MS + START_POLL_MS);
+		expect(ctl.boot).toBe('idle');
+		ctl.startServer();
+		expect(composer.send).not.toHaveBeenCalled();
+	});
+
+	it('stops a pending start as soon as previews turn off', async () => {
+		vi.useFakeTimers();
+		const composer = bridge();
+		const ctl = new YubiController(session, composer);
+		mockApi([]);
+		await ctl.open();
+		expect(ctl.boot).toBe('pending');
+		mockDisabled();
+		await vi.advanceTimersByTimeAsync(START_POLL_MS);
+		expect(ctl.boot).toBe('idle');
+		expect(ctl.disabled).toBe(true);
+		expect(ctl.error).toBe(PREVIEWS_DISABLED);
+		const before = composer.send.mock.calls.length;
+		await vi.advanceTimersByTimeAsync(START_POLL_MS * 5);
+		expect(composer.send.mock.calls).toHaveLength(before);
+	});
+
+	it('clears the disabled state once previews come back', async () => {
+		const ctl = new YubiController(session, bridge());
+		mockDisabled();
+		await ctl.refresh();
+		expect(ctl.disabled).toBe(true);
+		mockApi([PREVIEW]);
+		await ctl.refresh();
+		expect(ctl.disabled).toBe(false);
+		expect(ctl.error).toBe('');
 		expect(ctl.selected?.id).toBe('abc123');
 	});
 

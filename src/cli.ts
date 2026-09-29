@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { findCctui, startDev } from './dev.ts';
+import { resolveCctui, startDev } from './dev.ts';
 import { parentOrigins } from './frame.ts';
 
 const USAGE = `Usage: yubi dev [options] [-- <dev command>]
@@ -9,7 +9,8 @@ const USAGE = `Usage: yubi dev [options] [-- <dev command>]
 Runs <dev command> (e.g. "npm run dev") and serves it through a proxy that the yubisashi pane
 at --parent-origin may frame; the picker is injected into every page.
 
-Under cctui (cctui-daemon on PATH and CCTUI_SESSION_ID set) the proxy listens on loopback over
+Under cctui (cctui-daemon on PATH and a session id from --session or CCTUI_SESSION_ID) the
+proxy listens on loopback over
 plain HTTP and is published as a cctui preview of the session: the printed URL is the cctui one,
 --parent-origin defaults to CCTUI_WEB_ORIGIN and the TLS options are ignored.
 
@@ -27,6 +28,8 @@ Options:
   --parent-origin O      origin allowed to frame the app; repeatable, or YUBI_PARENT_ORIGIN
                          (comma-separated). Required.
   --http                 plain HTTP instead of HTTPS
+  --session ID           cctui session to publish the preview to, when CCTUI_SESSION_ID is
+                         not in the environment
   --no-cctui             serve locally even when running under cctui
   -h, --help
 `;
@@ -51,6 +54,7 @@ async function main(argv: string[]) {
 			key: { type: 'string' },
 			'parent-origin': { type: 'string', multiple: true },
 			http: { type: 'boolean', default: false },
+			session: { type: 'string' },
 			'no-cctui': { type: 'boolean', default: false },
 			help: { type: 'boolean', short: 'h', default: false },
 		},
@@ -70,11 +74,11 @@ async function main(argv: string[]) {
 	const port = Number(values.port);
 	if (!Number.isInteger(port) || port < 0 || port > 65535) fail(`invalid --port ${values.port}`);
 	const env = process.env;
-	const cctuiBin = values['no-cctui'] ? null : findCctui(env);
-	const cctui =
-		cctuiBin && env.CCTUI_SESSION_ID
-			? { bin: cctuiBin, sessionId: env.CCTUI_SESSION_ID }
-			: undefined;
+	const cctui = resolveCctui({
+		session: values.session,
+		noCctui: values['no-cctui'],
+		env,
+	});
 	const originArgs =
 		values['parent-origin'] ?? env.YUBI_PARENT_ORIGIN ?? (cctui ? env.CCTUI_WEB_ORIGIN : undefined);
 	let origins: string[];

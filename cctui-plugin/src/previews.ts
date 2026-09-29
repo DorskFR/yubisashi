@@ -10,12 +10,45 @@ export function normalizePreview({ openedAt, opened_at, ...rest }: RawPreview): 
 	return { ...rest, opened_at: openedAt ?? opened_at ?? '' };
 }
 
+/** The server's verbatim refusal when `CCTUI_PREVIEW_HOST` is unset. */
+export const PREVIEWS_DISABLED = 'previews are disabled on this instance';
+
 type Fetch = typeof fetch;
 
 const same = (fetchImpl?: Fetch): Fetch => fetchImpl ?? ((input, init) => fetch(input, init));
 
+/** A failed preview call, carrying the server's own message rather than a bare status. */
+export class PreviewApiError extends Error {
+	constructor(
+		readonly status: number,
+		message: string,
+	) {
+		super(message);
+		this.name = 'PreviewApiError';
+	}
+
+	/** Previews are off instance-wide: no amount of waiting will produce one. */
+	get disabled(): boolean {
+		return this.message.includes(PREVIEWS_DISABLED);
+	}
+}
+
+/** Whether an unknown thrown value is the instance-wide refusal. */
+export function previewsDisabled(err: unknown): boolean {
+	return err instanceof PreviewApiError && err.disabled;
+}
+
 async function json<T>(res: Response, what: string): Promise<T> {
-	if (!res.ok) throw new Error(`${what}: ${res.status}`);
+	if (!res.ok) {
+		let message = `${what}: ${res.status}`;
+		try {
+			const detail = ((await res.json()) as { error?: unknown }).error;
+			if (typeof detail === 'string' && detail) message = detail;
+		} catch {
+			// A non-JSON body leaves the status as the only thing worth saying.
+		}
+		throw new PreviewApiError(res.status, message);
+	}
 	return (await res.json()) as T;
 }
 

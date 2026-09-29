@@ -1,6 +1,13 @@
 import type { ComposerBridge, PluginSession } from '../sdk/types.ts';
 import { formatContextBlock } from './context.logic.ts';
-import { authUrl, listPreviews, matchPreview, newest, type Preview } from './previews.ts';
+import {
+	authUrl,
+	listPreviews,
+	matchPreview,
+	newest,
+	type Preview,
+	previewsDisabled,
+} from './previews.ts';
 import {
 	isTrustedEvent,
 	originOf,
@@ -41,9 +48,15 @@ export function shouldAutoStart(input: {
 	canSend: boolean;
 	sent: boolean;
 	boot: BootStatus;
+	disabled: boolean;
 }): boolean {
 	return (
-		input.canSend && !input.error && input.previews === 0 && !input.sent && input.boot !== 'pending'
+		input.canSend &&
+		!input.error &&
+		!input.disabled &&
+		input.previews === 0 &&
+		!input.sent &&
+		input.boot !== 'pending'
 	);
 }
 
@@ -65,6 +78,8 @@ export class YubiController {
 	epoch = $state(0);
 	/** Progress of the "start a server" request sent to the agent on open. */
 	boot = $state<BootStatus>('idle');
+	/** Previews are off server-side, so there is nothing to wait for. */
+	disabled = $state(false);
 	frame: HTMLIFrameElement | null = null;
 	private sent = false;
 	private pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -93,13 +108,14 @@ export class YubiController {
 			canSend: this.canSend,
 			sent: this.sent,
 			boot: this.boot,
+			disabled: this.disabled,
 		};
 		if (shouldAutoStart(input)) this.startServer();
 	}
 
 	/** Send the start prompt and poll for a preview until one appears or the timeout passes. */
 	startServer() {
-		if (!this.canSend || this.boot === 'pending') return;
+		if (!this.canSend || this.boot === 'pending' || this.disabled) return;
 		this.composer.send?.(START_PROMPT);
 		this.sent = true;
 		this.boot = 'pending';
@@ -110,8 +126,12 @@ export class YubiController {
 			if (this.boot !== 'pending') return;
 			try {
 				this.previews = await listPreviews(this.session.id);
-			} catch {
+			} catch (err) {
 				this.previews = [];
+				if (previewsDisabled(err)) {
+					this.noteDisabled(err as Error);
+					return;
+				}
 			}
 			if (this.boot !== 'pending') return;
 			const next = newest(this.previews);
@@ -127,6 +147,15 @@ export class YubiController {
 			this.pollTimer = setTimeout(tick, START_POLL_MS);
 		};
 		this.pollTimer = setTimeout(tick, START_POLL_MS);
+	}
+
+	/** Stop waiting and say why: previews are off for the whole instance. */
+	private noteDisabled(err: Error) {
+		this.disabled = true;
+		this.error = err.message;
+		this.boot = 'idle';
+		if (this.pollTimer) clearTimeout(this.pollTimer);
+		this.pollTimer = null;
 	}
 
 	/** Stop polling when the pane unmounts. */
@@ -145,9 +174,11 @@ export class YubiController {
 			this.previews = await listPreviews(this.session.id);
 		} catch (err) {
 			this.error = (err as Error).message;
+			this.disabled = previewsDisabled(err);
 			this.refreshing = false;
 			return;
 		}
+		this.disabled = false;
 		this.refreshing = false;
 		const byUrl = wanted ? matchPreview(this.previews, wanted) : null;
 		const current = this.selected && this.previews.find((p) => p.id === this.selected?.id);

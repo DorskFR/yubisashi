@@ -26,4 +26,6 @@ export const messages = {
 	starting: 'Starting yubisashi…',
 	startTimeout: "Didn't start — check the conversation.",
 	retry: 'Retry',
+	previewsDisabled:
+		'Previews are off on this cctui instance, so no app can be framed here. Set CCTUI_PREVIEW_HOST on the server to turn them on.',
 };

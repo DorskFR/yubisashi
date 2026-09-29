@@ -45,6 +45,21 @@ export function findCctui(env: NodeJS.ProcessEnv = process.env): string | null {
 	return null;
 }
 
+/** The cctui session this run publishes a preview of. `--session` wins over
+ *  `CCTUI_SESSION_ID`, which adapters other than claude-code do not always set. */
+export function resolveCctui(input: {
+	session?: string;
+	noCctui?: boolean;
+	env?: NodeJS.ProcessEnv;
+}): CctuiOptions | undefined {
+	if (input.noCctui) return undefined;
+	const env = input.env ?? process.env;
+	const sessionId = input.session?.trim() || env.CCTUI_SESSION_ID;
+	if (!sessionId) return undefined;
+	const bin = findCctui(env);
+	return bin ? { bin, sessionId } : undefined;
+}
+
 function cctuiPreview(bin: string, action: 'open' | 'close', port: number, sessionId: string) {
 	return new Promise<string>((resolve, reject) => {
 		execFile(
