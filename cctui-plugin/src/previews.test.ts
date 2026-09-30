@@ -5,7 +5,9 @@ import {
 	matchPreview,
 	newest,
 	normalizePreview,
+	PREVIEWS_DISABLED,
 	type Preview,
+	previewsDisabled,
 } from './previews.ts';
 
 const A: Preview = {
@@ -47,6 +49,19 @@ describe('previews', () => {
 	it('reports failed calls', async () => {
 		await expect(listPreviews('s1', reply({}, 403))).rejects.toThrow('previews: 403');
 		await expect(authUrl('s1', A, reply({}, 404))).rejects.toThrow('ticket: 404');
+	});
+
+	it("carries the server's own message, and flags the instance-wide refusal", async () => {
+		const off = reply({ error: PREVIEWS_DISABLED }, 503);
+		await expect(listPreviews('s1', off)).rejects.toThrow(PREVIEWS_DISABLED);
+		await listPreviews('s1', off).catch((err) => expect(previewsDisabled(err)).toBe(true));
+		const other = reply({ error: 'not your session' }, 403);
+		await expect(listPreviews('s1', other)).rejects.toThrow('not your session');
+		await listPreviews('s1', other).catch((err) => expect(previewsDisabled(err)).toBe(false));
+		await listPreviews('s1', reply({}, 500)).catch((err) =>
+			expect(previewsDisabled(err)).toBe(false),
+		);
+		expect(previewsDisabled(new Error(PREVIEWS_DISABLED))).toBe(false);
 	});
 
 	it('reads the server camelCase openedAt and still accepts opened_at', () => {

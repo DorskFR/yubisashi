@@ -21,6 +21,9 @@ https://cctui-pv-<id>.example.com/`, which the yubisashi pane frames through cct
 (cctui terminates TLS and authenticates the owner). The parent origin defaults to
 `CCTUI_WEB_ORIGIN`; `--no-cctui` opts out. On exit it runs `preview close`.
 
+Sessions whose adapter does not export `CCTUI_SESSION_ID` can name the session instead:
+`yubi dev --session <id> -- npm run dev`. The flag wins over the environment variable.
+
 Outside cctui, pass `--parent-origin https://cctui.example.com`. It then serves the app on
 `https://127.0.0.1:4780` for the pane to frame. In both modes it:
 

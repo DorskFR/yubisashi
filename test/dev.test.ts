@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { type Browser, chromium } from 'playwright';
 import { createServer as createVite } from 'vite';
-import { type DevHandle, detectUrl, findCctui, startDev } from '../dist/dev.js';
+import { type DevHandle, detectUrl, findCctui, resolveCctui, startDev } from '../dist/dev.js';
 import type { ChildMessage } from '../dist/picker/index.js';
 
 const PARENT = 'https://review.example';
@@ -396,6 +396,31 @@ describe('cctui preview', () => {
 		assert.equal(findCctui({ PATH: `/nonexistent:${bin}` }), join(bin, 'cctui-daemon'));
 		assert.equal(findCctui({ PATH: '/nonexistent' }), null);
 		assert.equal(findCctui({}), null);
+	});
+
+	test('--session stands in for CCTUI_SESSION_ID, and wins over it', () => {
+		const daemon = join(bin, 'cctui-daemon');
+		const env = { PATH: bin };
+		assert.deepEqual(resolveCctui({ session: 'sess-flag', env }), {
+			bin: daemon,
+			sessionId: 'sess-flag',
+		});
+		assert.deepEqual(resolveCctui({ env: { ...env, CCTUI_SESSION_ID: 'sess-env' } }), {
+			bin: daemon,
+			sessionId: 'sess-env',
+		});
+		assert.deepEqual(
+			resolveCctui({ session: 'sess-flag', env: { ...env, CCTUI_SESSION_ID: 'sess-env' } }),
+			{ bin: daemon, sessionId: 'sess-flag' },
+		);
+		assert.equal(resolveCctui({ env }), undefined, 'no session id anywhere');
+		assert.equal(resolveCctui({ session: '  ', env }), undefined, 'a blank flag is no id');
+		assert.equal(resolveCctui({ session: 'sess-flag', noCctui: true, env }), undefined);
+		assert.equal(
+			resolveCctui({ session: 'sess-flag', env: { PATH: '/nonexistent' } }),
+			undefined,
+			'no daemon on PATH',
+		);
 	});
 
 	test('publishes the loopback proxy as a preview and closes it on exit', async () => {
