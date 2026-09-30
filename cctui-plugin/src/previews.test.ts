@@ -5,8 +5,8 @@ import {
 	matchPreview,
 	newest,
 	normalizePreview,
-	type Preview,
 	PREVIEWS_DISABLED,
+	type Preview,
 	previewsDisabled,
 } from './previews.ts';
 
