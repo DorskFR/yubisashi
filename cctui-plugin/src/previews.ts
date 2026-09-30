@@ -19,11 +19,11 @@ const same = (fetchImpl?: Fetch): Fetch => fetchImpl ?? ((input, init) => fetch(
 
 /** A failed preview call, carrying the server's own message rather than a bare status. */
 export class PreviewApiError extends Error {
-	constructor(
-		readonly status: number,
-		message: string,
-	) {
+	readonly status: number;
+
+	constructor(status: number, message: string) {
 		super(message);
+		this.status = status;
 		this.name = 'PreviewApiError';
 	}
 
