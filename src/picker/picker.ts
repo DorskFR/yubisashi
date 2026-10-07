@@ -1,6 +1,7 @@
 import { describe, label } from './inspect.ts';
 import { createLookClient, type LookClient, type LookHandler, lookPage } from './look.ts';
 import { lookDom } from './look-dom.ts';
+import { lookShot } from './look-shot.ts';
 import { lookStyles } from './look-styles.ts';
 import {
 	type ChildMessage,
@@ -107,7 +108,13 @@ export function createPicker(options: PickerOptions): PickerHandle {
 			doc,
 			win,
 			root,
-			handlers: { page: lookPage, dom: lookDom, styles: lookStyles, ...options.lookHandlers },
+			handlers: {
+				page: lookPage,
+				dom: lookDom,
+				styles: lookStyles,
+				shot: lookShot,
+				...options.lookHandlers,
+			},
 			onServed: (kind, selector) =>
 				send(selector ? { type: 'look:served', kind, selector } : { type: 'look:served', kind }),
 		});

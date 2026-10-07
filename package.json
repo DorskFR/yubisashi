@@ -62,6 +62,9 @@
 		"test:cctui": "npm run build:cctui && vitest run --config cctui-plugin/vitest.config.ts",
 		"build:cctui": "node cctui-plugin/scripts/build.ts"
 	},
+	"dependencies": {
+		"modern-screenshot": "^4.7.0"
+	},
 	"peerDependencies": {
 		"vite": ">=5"
 	},

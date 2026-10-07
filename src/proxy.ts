@@ -10,8 +10,18 @@ import { bootstrap, CSP_HEADERS, injectScript, relaxCsp } from './frame.ts';
 import { createLookChannel, type LookChannel } from './look.ts';
 
 export const PICKER_PATH = '/__yubi/picker.js';
+export const RASTER_PATH = '/__yubi/raster.js';
 const PICKER_DIR = new URL('./picker/', import.meta.url);
 const MODULE_PREFIX = '/__yubi/picker/';
+
+/** The DOM-to-canvas renderer's ESM bundle, resolved once; null when the dependency is missing. */
+function rasterFile(): string | null {
+	try {
+		return fileURLToPath(import.meta.resolve('modern-screenshot'));
+	} catch {
+		return null;
+	}
+}
 
 export type ProxyOptions = {
 	target: URL;
@@ -119,6 +129,22 @@ async function servePicker(
 	}
 }
 
+async function serveRaster(res: ServerResponse) {
+	const file = rasterFile();
+	res.setHeader('cache-control', 'no-store');
+	if (!file) {
+		res.writeHead(404, { 'content-type': 'text/plain' });
+		return res.end('yubisashi: modern-screenshot is not installed next to @dorsk/yubisashi');
+	}
+	try {
+		const body = await readFile(file);
+		res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' });
+		res.end(body);
+	} catch {
+		res.writeHead(404).end();
+	}
+}
+
 export function createProxy({ target, origins, lookToken, lookTimeout }: ProxyOptions): Proxy {
 	const send = target.protocol === 'https:' ? httpsRequest : request;
 	const port = Number(target.port || (target.protocol === 'https:' ? 443 : 80));
@@ -129,6 +155,10 @@ export function createProxy({ target, origins, lookToken, lookTimeout }: ProxyOp
 		const pathname = (req.url ?? '/').split('?')[0] ?? '/';
 		if (pathname === PICKER_PATH || pathname.startsWith(MODULE_PREFIX)) {
 			void servePicker(pathname, res, origins, look !== null);
+			return;
+		}
+		if (look && pathname === RASTER_PATH) {
+			void serveRaster(res);
 			return;
 		}
 		if (look?.handle(req, res)) return;

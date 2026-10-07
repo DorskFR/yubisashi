@@ -1,11 +1,14 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
+import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { type DevState, readDevState, STATE_DIR, STATE_FILE } from './dev.ts';
 import { DEFAULT_LOOK_TIMEOUT } from './look.ts';
 import type { PageInfo } from './picker/look.ts';
 import type { DomResult } from './picker/look-dom.ts';
 import { DEFAULT_DOM_DEPTH, DEFAULT_DOM_MAX_BYTES } from './picker/look-dom.ts';
+import type { ShotResult } from './picker/look-shot.ts';
 import type { StylesResult } from './picker/look-styles.ts';
 
 export const LOOK_USAGE = `Usage: yubi look <what> [selector] [options]
@@ -24,6 +27,11 @@ consent (the pane's "Let the agent look" switch).
       --props a,b,…       only these properties
       --all               every computed property
       --pseudo ::before   style a pseudo-element instead
+  shot [selector]         PNG of the viewport (or the element), rendered from the DOM inside
+                          the user's tab; written to ${STATE_DIR}/shots/<timestamp>.png
+      --out FILE          write the PNG there instead
+      --scale N           pixel ratio of the image (default 1)
+      --raster            accepted for compatibility; the DOM raster is the only path
 
 Options:
   --json                  raw JSON instead of text
@@ -193,12 +201,51 @@ export function formatStyles(result: StylesResult): string {
 	return lines.join('\n');
 }
 
+export const SHOT_TIMEOUT_MS = 60_000;
+
+const pngSize = (png: Buffer) =>
+	png.length >= 24 && png.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))
+		? { width: png.readUInt32BE(16), height: png.readUInt32BE(20) }
+		: null;
+
+const stamp = () => new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 23);
+
+export type SavedShot =
+	| { path: string; width: number; height: number; scale: number; warnings: string[] }
+	| { error: string };
+
+/** Writes the shot and returns what to print for it. */
+export function saveShot(result: ShotResult, io: LookIo, out?: string): SavedShot {
+	if ('error' in result) return result;
+	const comma = result.png.indexOf(',');
+	if (!result.png.startsWith('data:image/png;base64,') || comma < 0)
+		return { error: 'the browser returned something that is not a PNG' };
+	const png = Buffer.from(result.png.slice(comma + 1), 'base64');
+	const size = pngSize(png);
+	if (!size) return { error: 'the browser returned a malformed PNG' };
+	const path = resolve(io.cwd, out ?? join(STATE_DIR, 'shots', `${stamp()}.png`));
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, png);
+	return { path, ...size, scale: result.scale, warnings: result.warnings };
+}
+
+export function formatShot(saved: SavedShot): string {
+	if ('error' in saved) return saved.error;
+	return [
+		saved.path,
+		`${saved.width}x${saved.height} px (scale ${saved.scale})`,
+		...saved.warnings.map((w) => `warning: ${w}`),
+	].join('\n');
+}
+
 export type LookCommand = {
 	kind: string;
 	args: Record<string, unknown>;
 	json: boolean;
 	timeoutMs: number;
 	format: (data: unknown) => string;
+	/** Turns the browser's data into what is printed; by default the data itself. */
+	finish?: (data: unknown, io: LookIo) => unknown;
 };
 
 export function parseLook(argv: string[]): LookCommand | { usage: string; error?: string } {
@@ -211,6 +258,9 @@ export function parseLook(argv: string[]): LookCommand | { usage: string; error?
 			props: { type: 'string' },
 			all: { type: 'boolean', default: false },
 			pseudo: { type: 'string' },
+			out: { type: 'string' },
+			scale: { type: 'string' },
+			raster: { type: 'boolean', default: false },
 			help: { type: 'boolean', short: 'h', default: false },
 		},
 		allowPositionals: true,
@@ -260,6 +310,20 @@ export function parseLook(argv: string[]): LookCommand | { usage: string; error?
 				format: (d) => formatStyles(d as StylesResult),
 			};
 		}
+		case 'shot': {
+			const scale = values.scale === undefined ? undefined : Number(values.scale);
+			if (scale !== undefined && !(scale > 0 && scale <= 4))
+				return { usage: LOOK_USAGE, error: `invalid --scale ${values.scale}` };
+			const out = values.out;
+			return {
+				...base,
+				timeoutMs: seconds === undefined ? SHOT_TIMEOUT_MS : base.timeoutMs,
+				kind,
+				args: { selector, scale },
+				format: (d) => formatShot(d as SavedShot),
+				finish: (d, io) => saveShot(d as ShotResult, io, out),
+			};
+		}
 		default:
 			return { usage: LOOK_USAGE, error: kind ? `unknown look "${kind}"` : undefined };
 	}
@@ -280,7 +344,7 @@ export async function runLook(argv: string[], io: LookIo): Promise<number> {
 		io.stderr(`yubi look: ${result.message}\n`);
 		return result.code;
 	}
-	const data = result.data;
+	const data = command.finish ? command.finish(result.data, io) : result.data;
 	if (
 		typeof data === 'object' &&
 		data !== null &&
@@ -293,10 +357,6 @@ export async function runLook(argv: string[], io: LookIo): Promise<number> {
 		);
 		return EXIT.failed;
 	}
-	io.stdout(
-		command.json
-			? `${JSON.stringify(result.data, null, '\t')}\n`
-			: `${command.format(result.data)}\n`,
-	);
+	io.stdout(command.json ? `${JSON.stringify(data, null, '\t')}\n` : `${command.format(data)}\n`);
 	return EXIT.ok;
 }

@@ -298,6 +298,63 @@ describe('look dom and styles', () => {
 	});
 });
 
+const pngSize = (png: Buffer) => ({ width: png.readUInt32BE(16), height: png.readUInt32BE(20) });
+const PNG_MAGIC = Buffer.from('89504e470d0a1a0a', 'hex');
+
+describe('look shot', () => {
+	const rasterLoads = () =>
+		app.evaluate(
+			() =>
+				performance.getEntriesByType('resource').filter((e) => e.name.endsWith('/__yubi/raster.js'))
+					.length,
+		);
+
+	test('the picker stays dependency-free until the first shot', async () => {
+		const mod = await (await fetch(`${origin}/__yubi/picker/look-shot.js`)).text();
+		assert.doesNotMatch(mod, /foreignObject/);
+		assert.ok(mod.length < 8 * 1024, `look-shot.js is ${mod.length} bytes`);
+		assert.equal(await rasterLoads(), 0);
+	});
+
+	test('shoots the viewport to a PNG whose size matches viewport x scale', async () => {
+		const out = join(dir, 'viewport.png');
+		const run = await yubi(dir, 'shot', '--out', out);
+		assert.equal(run.code, 0, run.stderr);
+		const [path, size, warning] = run.stdout.trim().split('\n');
+		assert.equal(path, out);
+		assert.equal(size, '1000x700 px (scale 1)');
+		assert.match(warning ?? '', /^warning: raster shot: /);
+		const png = readFileSync(out);
+		assert.ok(png.subarray(0, 8).equals(PNG_MAGIC));
+		assert.deepEqual(pngSize(png), { width: 1000, height: 700 });
+		assert.equal(await rasterLoads(), 1);
+	});
+
+	test('shoots a selector at --scale 2 into the shots folder, loading the raster chunk once', async () => {
+		const run = await yubi(dir, 'shot', 'button.retry', '--scale', '2', '--json');
+		assert.equal(run.code, 0, run.stderr);
+		const saved = JSON.parse(run.stdout);
+		assert.match(saved.path, /\/\.yubisashi\/shots\/[\d_-]+\.png$/);
+		assert.equal(saved.scale, 2);
+		const box = await app.locator('button.retry').boundingBox();
+		assert.ok(box);
+		const png = readFileSync(saved.path);
+		assert.deepEqual(pngSize(png), {
+			width: Math.round(box.width * 2),
+			height: Math.round(box.height * 2),
+		});
+		assert.equal(saved.width, pngSize(png).width);
+		assert.equal(saved.height, pngSize(png).height);
+		assert.equal(await rasterLoads(), 1);
+	});
+
+	test('a selector that matches nothing is an error', async () => {
+		const run = await yubi(dir, 'shot', '.nope');
+		assert.notEqual(run.code, 0);
+		assert.match(run.stderr, /no element matches "\.nope"/);
+	});
+});
+
 describe('look consent', () => {
 	test('with the switch off, look page exits non-zero with the refusal', async () => {
 		await send({ type: 'look:allow', allowed: false });
