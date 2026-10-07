@@ -47,6 +47,50 @@ tell the user to open the URL in a tab once and accept it.
 
 Comments without a target are general remarks about the app.
 
+## Look for yourself: `yubi look`
+
+While `yubi dev` runs and the user has the yubisashi pane open, you can read what their browser
+shows right now. Run these from the directory where `yubi dev` was started (it leaves
+`.yubisashi/dev.json` there):
+
+```sh
+npx -y @dorsk/yubisashi look page                      # route, title, viewport, scroll, focus
+npx -y @dorsk/yubisashi look dom '.card'               # live DOM under a selector (default body)
+npx -y @dorsk/yubisashi look styles '.card > h2'       # computed style, box, visibility, source
+npx -y @dorsk/yubisashi look shot                      # PNG of the viewport, path printed
+npx -y @dorsk/yubisashi look shot '.card' --scale 2    # PNG of one element
+```
+
+`--json` prints raw JSON. `look dom` takes `--depth N` and `--max-bytes N`; `look styles` takes
+`--props color,display`, `--all` and `--pseudo ::before`; `look shot` takes `--out FILE` and
+`--scale N`.
+
+When to use it:
+
+- After an edit and the hot reload, check the result yourself with `look styles` or `look shot`
+  before telling the user it is fixed.
+- When a comment's HTML is not enough to explain a layout, overflow or z-index problem, ask
+  `look styles` for the element rather than guessing. It reports what differs from a bare
+  element, the box model, whether the element is visible (and what covers it), the resolved
+  CSS variables, the source `file:line` and the component chain.
+- Prefer `page`, `dom` and `styles` (cheap text) over `shot` (image tokens). Use `shot` only for
+  visual questions: alignment, colours, what the user actually sees.
+- `look dom` annotates Svelte elements with `data-yubi-src="file:line"`; that is where to edit.
+
+Every request shows up in the pane as "Agent looked: …", and the user can switch looking off.
+
+Errors and what to do:
+
+- "no `yubi dev` running here": start it (see Start), from the app's directory.
+- "no browser has the app open": ask the user to open the yubisashi pane; a plain tab on the
+  preview URL does not serve looks.
+- "the user has turned looking off": do not retry. Ask the user what they would like you to
+  see, or ask them to switch "Let the agent look" back on.
+- "the browser did not answer": the tab may be in the background or busy; try once more, then
+  ask.
+- A `shot` always prints a warning line about what the DOM raster cannot render (cross-origin
+  images, `<video>`, some filters, tainted canvases). Do not take blank areas there as a bug.
+
 ## Stop
 
 When the user says they are done, stop the background command. That shuts the proxy down
