@@ -30,7 +30,11 @@ export function injectScript(html: string, src: string): string {
 	return html + tag;
 }
 
-export const bootstrap = (pickerModule: string, origins: string[]) =>
+export const bootstrap = (
+	pickerModule: string,
+	origins: string[],
+	extra: { look?: boolean } = {},
+) =>
 	`import { createPicker } from ${JSON.stringify(pickerModule)};
-if (window.parent !== window) createPicker({ parentOrigin: ${JSON.stringify(origins)} });
+if (window.parent !== window) createPicker({ parentOrigin: ${JSON.stringify(origins)}${extra.look ? ', look: true' : ''} });
 `;

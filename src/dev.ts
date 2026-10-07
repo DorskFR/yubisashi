@@ -1,10 +1,20 @@
 import { type ChildProcess, execFile, spawn } from 'node:child_process';
-import { accessSync, constants } from 'node:fs';
+import {
+	accessSync,
+	appendFileSync,
+	constants,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from 'node:fs';
 import { createServer as createHttpServer, type Server } from 'node:http';
 import { type AddressInfo, createServer as createNetServer } from 'node:net';
 import { delimiter, join } from 'node:path';
 import { createSecureContext, type SecureContext, TLSSocket } from 'node:tls';
 import { cacheDir, ensureCert, namesFor } from './cert.ts';
+import { DEFAULT_LOOK_TIMEOUT, newToken } from './look.ts';
 import { createProxy } from './proxy.ts';
 
 export type DevOptions = {
@@ -26,7 +36,64 @@ export type DevOptions = {
 	readyTimeout?: number;
 	/** Publish the proxy as a cctui preview of this session instead of printing local URLs. */
 	cctui?: CctuiOptions;
+	/** Seconds a `yubi look` request waits for the browser before 504. */
+	lookTimeout?: number;
+	/** Skip the look channel and its state file. */
+	noLook?: boolean;
 };
+
+export const STATE_DIR = '.yubisashi';
+export const STATE_FILE = 'dev.json';
+
+/** What `yubi look` needs to reach the proxy that `yubi dev` started in the same directory. */
+export type DevState = {
+	scheme: 'http' | 'https';
+	host: string;
+	port: number;
+	token: string;
+	pid: number;
+};
+
+export const statePath = (cwd: string) => join(cwd, STATE_DIR, STATE_FILE);
+
+export function readDevState(cwd: string): DevState | null {
+	try {
+		const parsed = JSON.parse(readFileSync(statePath(cwd), 'utf8')) as Partial<DevState>;
+		if (typeof parsed.port !== 'number' || typeof parsed.token !== 'string') return null;
+		return {
+			scheme: parsed.scheme === 'https' ? 'https' : 'http',
+			host: parsed.host || '127.0.0.1',
+			port: parsed.port,
+			token: parsed.token,
+			pid: parsed.pid ?? 0,
+		};
+	} catch {
+		return null;
+	}
+}
+
+function excludeFromGit(cwd: string) {
+	const info = join(cwd, '.git', 'info');
+	if (!existsSync(join(cwd, '.git'))) return;
+	try {
+		mkdirSync(info, { recursive: true });
+		const file = join(info, 'exclude');
+		const current = existsSync(file) ? readFileSync(file, 'utf8') : '';
+		if (current.split('\n').some((l) => l.trim() === `${STATE_DIR}/`)) return;
+		appendFileSync(file, `${current && !current.endsWith('\n') ? '\n' : ''}${STATE_DIR}/\n`);
+	} catch {}
+}
+
+function writeDevState(cwd: string, state: DevState) {
+	mkdirSync(join(cwd, STATE_DIR), { recursive: true });
+	writeFileSync(statePath(cwd), `${JSON.stringify(state, null, '\t')}\n`, { mode: 0o600 });
+	excludeFromGit(cwd);
+}
+
+function removeDevState(cwd: string, token: string) {
+	if (readDevState(cwd)?.token !== token) return;
+	rmSync(statePath(cwd), { force: true });
+}
 
 export type CctuiOptions = { sessionId: string; bin?: string };
 
@@ -235,7 +302,13 @@ export async function startDev(options: DevOptions): Promise<DevHandle> {
 		throw err;
 	}
 
-	const proxy = createProxy({ target, origins });
+	const lookToken = options.noLook ? undefined : newToken();
+	const proxy = createProxy({
+		target,
+		origins,
+		lookToken,
+		lookTimeout: (options.lookTimeout ?? DEFAULT_LOOK_TIMEOUT / 1000) * 1000,
+	});
 	const app = createHttpServer(proxy.request);
 	app.on('upgrade', proxy.upgrade);
 	const server = https
@@ -266,11 +339,20 @@ export async function startDev(options: DevOptions): Promise<DevHandle> {
 			throw err;
 		}
 	} else urls = reachableUrls(host, bound, https ? 'https' : 'http', options.advertise);
+	if (lookToken)
+		writeDevState(cwd, {
+			scheme: https ? 'https' : 'http',
+			host: WILDCARD.has(host) || LOOPBACK.has(host) ? '127.0.0.1' : host,
+			port: bound,
+			token: lookToken,
+			pid: process.pid,
+		});
 
 	let closed = false;
 	const close = async () => {
 		if (closed) return;
 		closed = true;
+		if (lookToken) removeDevState(cwd, lookToken);
 		if (cctui) await cctuiPreview(cctui.bin, 'close', bound, cctui.sessionId).catch(() => {});
 		killTree(child);
 		proxy.close();
