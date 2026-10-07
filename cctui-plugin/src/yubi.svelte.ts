@@ -53,7 +53,7 @@ export function writeLookAllowed(allowed: boolean, store: Storage | null = stora
 	} catch {}
 }
 
-export const lookNotice = (msg: { kind: string; selector?: string }) =>
+export const lookNoticeText = (msg: { kind: string; selector?: string }) =>
 	m.lookServed(msg.kind, msg.selector);
 
 /** The path (with query and hash) a typed address means inside the framed app. Any origin
@@ -301,7 +301,7 @@ export class YubiController {
 
 	private noteLook(msg: { kind: string; selector?: string }) {
 		this.looks++;
-		this.lookNotice = lookNotice(msg);
+		this.lookNotice = lookNoticeText(msg);
 		if (this.noticeTimer) clearTimeout(this.noticeTimer);
 		this.noticeTimer = setTimeout(() => {
 			this.lookNotice = '';
