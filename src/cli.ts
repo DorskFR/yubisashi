@@ -3,8 +3,10 @@ import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { resolveCctui, startDev } from './dev.ts';
 import { parentOrigins } from './frame.ts';
+import { runLook } from './look-cli.ts';
 
 const USAGE = `Usage: yubi dev [options] [-- <dev command>]
+       yubi look <what> [selector] [options]     (yubi look --help)
 
 Runs <dev command> (e.g. "npm run dev") and serves it through a proxy that the yubisashi pane
 at --parent-origin may frame; the picker is injected into every page.
@@ -31,6 +33,8 @@ Options:
   --session ID           cctui session to publish the preview to, when CCTUI_SESSION_ID is
                          not in the environment
   --no-cctui             serve locally even when running under cctui
+  --look-timeout S       seconds a \`yubi look\` request waits for the browser (default 15)
+  --no-look              no look channel: \`yubi look\` cannot reach this proxy
   -h, --help
 `;
 
@@ -40,6 +44,15 @@ function fail(message: string): never {
 }
 
 async function main(argv: string[]) {
+	if (argv[0] === 'look') {
+		const code = await runLook(argv.slice(1), {
+			cwd: process.cwd(),
+			stdout: (t) => process.stdout.write(t),
+			stderr: (t) => process.stderr.write(t),
+		});
+		process.exitCode = code;
+		return;
+	}
 	const dash = argv.indexOf('--');
 	const own = dash === -1 ? argv : argv.slice(0, dash);
 	const command = dash === -1 ? [] : argv.slice(dash + 1);
@@ -56,6 +69,8 @@ async function main(argv: string[]) {
 			http: { type: 'boolean', default: false },
 			session: { type: 'string' },
 			'no-cctui': { type: 'boolean', default: false },
+			'look-timeout': { type: 'string' },
+			'no-look': { type: 'boolean', default: false },
 			help: { type: 'boolean', short: 'h', default: false },
 		},
 		allowPositionals: true,
@@ -73,6 +88,10 @@ async function main(argv: string[]) {
 	if (positionals[0] !== 'dev' || positionals.length !== 1) fail(USAGE);
 	const port = Number(values.port);
 	if (!Number.isInteger(port) || port < 0 || port > 65535) fail(`invalid --port ${values.port}`);
+	const lookTimeout =
+		values['look-timeout'] === undefined ? undefined : Number(values['look-timeout']);
+	if (lookTimeout !== undefined && !(lookTimeout > 0))
+		fail(`invalid --look-timeout ${values['look-timeout']}`);
 	const env = process.env;
 	const cctui = resolveCctui({
 		session: values.session,
@@ -120,12 +139,15 @@ async function main(argv: string[]) {
 		origins,
 		https,
 		cctui,
+		lookTimeout,
+		noLook: values['no-look'],
 		log,
 	}).catch((err: Error) => fail(err.message));
 
 	for (const url of handle.urls) process.stdout.write(`yubisashi: ${url}\n`);
 	log(`yubisashi: framing allowed from ${origins.join(', ')}`);
 	if (cctui) log(`yubisashi: published as a cctui preview of session ${cctui.sessionId}`);
+	if (!values['no-look']) log('yubisashi: `yubi look` can reach this proxy from this directory');
 	if (https && !tls)
 		log(
 			'yubisashi: the certificate is self-signed; open one of the URLs above in a browser tab and accept it once, then the yubisashi pane can frame it',

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Badge, Button, IconButton, Input, Select, Text, Toolbar } from '@dorsk/tsumikit';
+	import { Badge, Button, IconButton, Input, Select, Switch, Text, Toolbar } from '@dorsk/tsumikit';
 	import type { PaneProps } from '../sdk/types.ts';
 	import { messages as m } from './messages.ts';
 	import { YubiController } from './yubi.svelte.ts';
@@ -131,9 +131,14 @@
 			<Text size="sm" tone="danger">{ctl.error}</Text>
 		</div>
 	{/if}
+	{#if ctl.lookNotice}
+		<div class="notice" role="status" data-journey="look-notice">
+			<Text size="sm" tone="accent">{ctl.lookNotice}</Text>
+		</div>
+	{/if}
 	<div class="status" data-journey="status" data-status={ctl.status}>
 		{#if ctl.selected}
-			<Text size="sm" tone="faint">{statusText}</Text>
+			<Text size="sm" tone="faint">{ctl.lookAllowed ? statusText : m.lookOff}</Text>
 		{:else if ctl.disabled}
 			<Text size="sm" tone="faint">{m.previewsDisabled}</Text>
 		{:else if ctl.boot === 'pending'}
@@ -147,6 +152,22 @@
 		{#if ctl.pins.length}
 			<Badge tone="accent" size="sm">{m.pins(ctl.pins.length)}</Badge>
 		{/if}
+		{#if ctl.looks}
+			<Badge tone="neutral" size="sm" data-journey="look-count">{m.looks(ctl.looks)}</Badge>
+		{/if}
+		<span class="consent">
+			<Switch
+				size="sm"
+				label={m.lookAllow}
+				labelVisible
+				checked={ctl.lookAllowed}
+				data-journey="look-allow"
+				onclick={(e) => {
+					e.preventDefault();
+					ctl.setLookAllowed(!ctl.lookAllowed);
+				}}
+			/>
+		</span>
 	</div>
 </section>
 
@@ -174,9 +195,14 @@
 		min-width: 0;
 		flex-wrap: wrap;
 	}
-	.hint {
+	.hint,
+	.notice {
 		padding: var(--sp-1) var(--sp-2);
 		border-top: 1px solid var(--border);
+	}
+	.consent {
+		margin-left: auto;
+		flex: none;
 	}
 	.frame {
 		flex: 1 1 auto;

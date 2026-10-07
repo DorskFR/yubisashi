@@ -29,6 +29,8 @@ export type ParentMessage = Marked<
 	/** Drops the selection; `id` records it as the targets of comment #id so its pin sticks to the picked elements. */
 	| { type: 'pick:clear'; id?: number }
 	| { type: 'pins:set'; pins: Pin[] }
+	/** The user's consent to `yubi look`; off by the pane's switch. */
+	| { type: 'look:allow'; allowed: boolean }
 >;
 
 /** App document → parent window. */
@@ -39,6 +41,8 @@ export type ChildMessage = Marked<
 	| { type: 'pick:cancel' }
 	| { type: 'pin:open'; id: number }
 	| { type: 'route'; route: string }
+	/** One `yubi look` request was answered. */
+	| { type: 'look:served'; kind: string; selector?: string }
 >;
 
 const PARENT_TYPES: ReadonlySet<string> = new Set([
@@ -46,6 +50,7 @@ const PARENT_TYPES: ReadonlySet<string> = new Set([
 	'pick:stop',
 	'pick:clear',
 	'pins:set',
+	'look:allow',
 ]);
 const CHILD_TYPES: ReadonlySet<string> = new Set([
 	'pick:state',
@@ -54,6 +59,7 @@ const CHILD_TYPES: ReadonlySet<string> = new Set([
 	'pick:cancel',
 	'pin:open',
 	'route',
+	'look:served',
 ]);
 
 const isMarked = (data: unknown): data is { yubi: typeof YUBI; type: string } =>

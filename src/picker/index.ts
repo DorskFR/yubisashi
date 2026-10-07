@@ -1,5 +1,16 @@
 export { describe, label, selectorOf } from './inspect.ts';
 export {
+	createLookClient,
+	type LookClient,
+	type LookContext,
+	type LookHandler,
+	lookPage,
+	type PageInfo,
+} from './look.ts';
+export { type DomResult, lookDom, serializeDom } from './look-dom.ts';
+export { lookShot, RASTER_PATH, RASTER_WARNING, type ShotResult } from './look-shot.ts';
+export { lookStyles, type StylesResult } from './look-styles.ts';
+export {
 	type ChildMessage,
 	createPicker,
 	type Frame,

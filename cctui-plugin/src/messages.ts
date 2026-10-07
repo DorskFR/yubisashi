@@ -23,6 +23,11 @@ export const messages = {
 	statusWaiting:
 		'Picker not detected: the app must be served by `yubi dev` (or use @dorsk/yubisashi/vite with this origin as parent).',
 	openInYubisashi: 'Open in yubisashi',
+	lookAllow: 'Let the agent look',
+	lookOff: 'Looking is off: `yubi look` is refused until you switch it back on.',
+	lookServed: (kind: string, selector?: string) =>
+		`Agent looked: ${kind}${selector ? ` \`${selector}\`` : ''}`,
+	looks: (count: number) => `${count} looked`,
 	starting: 'Starting yubisashi…',
 	startTimeout: "Didn't start — check the conversation.",
 	retry: 'Retry',

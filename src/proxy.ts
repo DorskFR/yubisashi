@@ -7,16 +7,34 @@ import { connect as tlsConnect } from 'node:tls';
 import { fileURLToPath } from 'node:url';
 import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
 import { bootstrap, CSP_HEADERS, injectScript, relaxCsp } from './frame.ts';
+import { createLookChannel, type LookChannel } from './look.ts';
 
 export const PICKER_PATH = '/__yubi/picker.js';
+export const RASTER_PATH = '/__yubi/raster.js';
 const PICKER_DIR = new URL('./picker/', import.meta.url);
 const MODULE_PREFIX = '/__yubi/picker/';
 
-export type ProxyOptions = { target: URL; origins: string[] };
+/** The DOM-to-canvas renderer's ESM bundle, resolved once; null when the dependency is missing. */
+function rasterFile(): string | null {
+	try {
+		return fileURLToPath(import.meta.resolve('modern-screenshot'));
+	} catch {
+		return null;
+	}
+}
+
+export type ProxyOptions = {
+	target: URL;
+	origins: string[];
+	/** Token the CLI must present on `POST /__yubi/look`; without it there is no look channel. */
+	lookToken?: string;
+	lookTimeout?: number;
+};
 
 export type Proxy = {
 	request: (req: IncomingMessage, res: ServerResponse) => void;
 	upgrade: (req: IncomingMessage, socket: Duplex, head: Buffer) => void;
+	look: LookChannel | null;
 	close: () => void;
 };
 
@@ -92,10 +110,16 @@ const readAll = (stream: IncomingMessage) =>
 		stream.on('error', reject);
 	});
 
-async function servePicker(pathname: string, res: ServerResponse, origins: string[]) {
+async function servePicker(
+	pathname: string,
+	res: ServerResponse,
+	origins: string[],
+	look: boolean,
+) {
 	res.setHeader('content-type', 'text/javascript; charset=utf-8');
 	res.setHeader('cache-control', 'no-store');
-	if (pathname === PICKER_PATH) return res.end(bootstrap(`${MODULE_PREFIX}index.js`, origins));
+	if (pathname === PICKER_PATH)
+		return res.end(bootstrap(`${MODULE_PREFIX}index.js`, origins, { look }));
 	const file = pathname.slice(MODULE_PREFIX.length);
 	if (!/^[\w-]+\.js$/.test(file)) return res.writeHead(404).end();
 	try {
@@ -105,17 +129,39 @@ async function servePicker(pathname: string, res: ServerResponse, origins: strin
 	}
 }
 
-export function createProxy({ target, origins }: ProxyOptions): Proxy {
+async function serveRaster(res: ServerResponse) {
+	const file = rasterFile();
+	res.setHeader('cache-control', 'no-store');
+	if (!file) {
+		res.writeHead(404, { 'content-type': 'text/plain' });
+		return res.end('yubisashi: modern-screenshot is not installed next to @dorsk/yubisashi');
+	}
+	try {
+		const body = await readFile(file);
+		res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' });
+		res.end(body);
+	} catch {
+		res.writeHead(404).end();
+	}
+}
+
+export function createProxy({ target, origins, lookToken, lookTimeout }: ProxyOptions): Proxy {
 	const send = target.protocol === 'https:' ? httpsRequest : request;
 	const port = Number(target.port || (target.protocol === 'https:' ? 443 : 80));
 	const tunnels = new Set<Duplex>();
+	const look = lookToken ? createLookChannel({ token: lookToken, timeout: lookTimeout }) : null;
 
 	const proxyRequest = (req: IncomingMessage, res: ServerResponse) => {
 		const pathname = (req.url ?? '/').split('?')[0] ?? '/';
 		if (pathname === PICKER_PATH || pathname.startsWith(MODULE_PREFIX)) {
-			void servePicker(pathname, res, origins);
+			void servePicker(pathname, res, origins, look !== null);
 			return;
 		}
+		if (look && pathname === RASTER_PATH) {
+			void serveRaster(res);
+			return;
+		}
+		if (look?.handle(req, res)) return;
 		const self = selfOrigin(req);
 		const upstream = send(
 			{
@@ -186,7 +232,9 @@ export function createProxy({ target, origins }: ProxyOptions): Proxy {
 	return {
 		request: proxyRequest,
 		upgrade: proxyUpgrade,
+		look,
 		close: () => {
+			look?.close();
 			for (const socket of tunnels) socket.destroy();
 		},
 	};

@@ -103,6 +103,16 @@ export function parseChildMessage(data: unknown): ChildMessage | null {
 			return isNum(data.id) ? { yubi: YUBI, type: 'pin:open', id: data.id } : null;
 		case 'route':
 			return isStr(data.route) ? { yubi: YUBI, type: 'route', route: data.route } : null;
+		case 'look:served': {
+			if (!isStr(data.kind)) return null;
+			const served: Extract<ChildMessage, { type: 'look:served' }> = {
+				yubi: YUBI,
+				type: 'look:served',
+				kind: data.kind.slice(0, 40),
+			};
+			if (isStr(data.selector)) served.selector = data.selector.slice(0, 200);
+			return served;
+		}
 		default:
 			return null;
 	}

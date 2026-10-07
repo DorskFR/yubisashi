@@ -60,6 +60,70 @@ and no token. `Ctrl-C` (or stopping the background task) kills the dev command w
 The package also ships `skill/SKILL.md`, a Claude Code skill describing the review loop for an
 agent.
 
+## Looking: `yubi look`
+
+The agent can read what the user's browser shows, through the same pane. `yubi dev` opens a
+request channel between the CLI and the framed picker; `yubi look` uses it from the directory
+where `yubi dev` was started.
+
+```sh
+yubi look page                        # route, title, viewport, scroll, device pixel ratio, focus
+yubi look dom [selector]              # the live DOM, compact; default root is body
+yubi look styles <selector>           # computed style, box model, rect, visibility, source
+yubi look shot [selector]             # PNG rendered from the DOM in the user's tab
+```
+
+Every command takes `--json` (raw JSON) and `--timeout S` (default 15 s, 60 s for `shot`).
+
+- `look dom` serializes the DOM as the user has it: current form values (`:value="…"`,
+  `:checked`), runtime classes, open/closed state. `<script>`/`<style>` bodies are dropped, SVG
+  path data collapsed, long text and attributes cut, subtrees past `--depth N` (default 12)
+  replaced by `<!-- N children -->`, and the whole thing capped at `--max-bytes N` (default
+  40960) with a `<!-- truncated -->` marker. Elements rendered by Svelte in dev carry
+  `data-yubi-src="file:line"`. A selector matching nothing or several elements is an error that
+  lists the count and the first matches.
+- `look styles` prints what differs from a bare element of the same tag (a probe appended to
+  `body` and removed at once), or `--props a,b` / `--all`; `--pseudo ::before` targets a
+  pseudo-element. It adds the content/padding/border/margin boxes, `getBoundingClientRect`, a
+  visibility verdict (display, visibility, opacity, zero size, off-screen, covered by which
+  element), the `var(--x)` values the element uses, the source `file:line` and the component
+  chain. With several matches it takes the first.
+- `look shot` rasterizes the viewport or one element with a DOM-to-canvas renderer
+  ([modern-screenshot](https://github.com/qq15725/modern-screenshot)) inside the user's tab, no
+  permission prompt. The renderer is a separate chunk, `/__yubi/raster.js`, fetched on the first
+  shot; the picker itself stays dependency-free. The PNG lands in `.yubisashi/shots/<timestamp>.png`
+  (or `--out FILE`), `--scale N` sets the pixel ratio, and a warning line lists what a raster
+  cannot show: cross-origin images without CORS, `<video>`, some filters and
+  `backdrop-filter`, canvases tainted by cross-origin content. `--raster` is accepted; the DOM
+  raster is the only capture path.
+
+Errors are explicit: "no `yubi dev` running here", "no browser has the app open" (nothing is
+subscribed: a plain tab on the preview URL never serves looks), "the user has turned looking
+off", "the browser did not answer". Each exits non-zero with its own code.
+
+### Security model
+
+- `yubi dev` generates a random token per run and writes `{ scheme, host, port, token, pid }` to
+  `.yubisashi/dev.json` in its working directory (mode 0600, `.yubisashi/` added to
+  `.git/info/exclude`), removed on exit. `POST /__yubi/look` requires
+  `Authorization: Bearer <token>`: the cctui tunnel also arrives on loopback, so loopback alone
+  is not proof of who is asking.
+- The picker side (`GET /__yubi/look/events`, `POST /__yubi/look/result/:id`,
+  `POST /__yubi/look/state/:sub`) is reached through the pane's frame, so it is protected by the
+  tunnel's owner authentication, like the app itself. Request ids are unguessable nonces, a
+  result is accepted once per id and only while that request is pending, and results are capped
+  at 10 MB. With several framed tabs, a request goes to the most recently active one only.
+- Consent: the pane has a "Let the agent look" switch, on by default and remembered per user
+  (browser storage). While it is off the proxy answers 403 and the CLI says so. Every served
+  request is announced to the pane as `look:served` and shown as "Agent looked: styles
+  `.card > h2`", with a counter in the status bar.
+- The picker subscribes only when it is framed by an allowed origin and was injected by
+  `yubi dev` (the Vite plugin has no look channel). `yubi dev --no-look` turns the channel off
+  altogether; `--look-timeout S` changes the default wait.
+
+Live tab capture (sharing the tab itself) is not part of this release; `shot` is always the DOM
+raster.
+
 ## Use as a Vite plugin
 
 ```sh
@@ -124,6 +188,7 @@ Parent → app:
 | `pick:stop`  |                            |
 | `pick:clear` | `id?: number` (pin the selection to comment #id) |
 | `pins:set`   | `pins: { id, selector }[]` |
+| `look:allow` | `allowed: boolean` (the consent switch) |
 
 App → parent:
 
@@ -135,10 +200,21 @@ App → parent:
 | `pick:selected` | `targets: Target[]`, `route`, `viewport`        |
 | `pick:cancel`   |                                                 |
 | `pin:open`      | `id: number`                                    |
+| `look:served`   | `kind: string`, `selector?: string`             |
 
 `Target`: `tag`, `selector`, `text`, `html`, `attrs`, `rect`, `source?: { file, line, column }`,
 `stack: Frame[]` (the components that rendered it). Types and the `isParentMessage` /
 `isChildMessage` guards are exported from `@dorsk/yubisashi/picker`.
+
+Proxy ⇄ picker (HTTP, only under `yubi dev`):
+
+| endpoint                        | who    | what                                                                                             |
+| ------------------------------- | ------ | ------------------------------------------------------------------------------------------------ |
+| `POST /__yubi/look`             | CLI    | `{ kind, args, timeout? }` with the bearer token; held until a result; 503 no browser, 504 timeout, 403 looking off |
+| `GET /__yubi/look/events?sub=…` | picker | SSE stream of `{ id, kind, args }`                                                               |
+| `POST /__yubi/look/result/:id`  | picker | `{ ok: true, data }` or `{ ok: false, error }`, accepted once                                    |
+| `POST /__yubi/look/state/:sub`  | picker | `{ allowed }`; also marks that tab as the active one                                             |
+| `GET /__yubi/raster.js`         | picker | the DOM-to-canvas renderer, fetched on the first `shot`                                          |
 
 ## cctui plugin
 

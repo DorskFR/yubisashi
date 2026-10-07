@@ -1,6 +1,6 @@
 {
 	"name": "@dorsk/yubisashi",
-	"version": "0.5.4",
+	"version": "0.6.0",
 	"description": "Point at elements of your running app from a review panel: an iframe picker, a Vite plugin and a `yubi dev` proxy that inject it in dev.",
 	"type": "module",
 	"license": "MIT",
@@ -61,6 +61,9 @@
 		"prepublishOnly": "npm run build",
 		"test:cctui": "npm run build:cctui && vitest run --config cctui-plugin/vitest.config.ts",
 		"build:cctui": "node cctui-plugin/scripts/build.ts"
+	},
+	"dependencies": {
+		"modern-screenshot": "^4.7.0"
 	},
 	"peerDependencies": {
 		"vite": ">=5"

@@ -1,4 +1,8 @@
 import { describe, label } from './inspect.ts';
+import { createLookClient, type LookClient, type LookHandler, lookPage } from './look.ts';
+import { lookDom } from './look-dom.ts';
+import { lookShot } from './look-shot.ts';
+import { lookStyles } from './look-styles.ts';
 import {
 	type ChildMessage,
 	type Frame,
@@ -25,6 +29,10 @@ export type PickerOptions = {
 	doc?: Document;
 	/** Milliseconds between route checks. */
 	routeEveryMs?: number;
+	/** Serve `yubi look` requests from the proxy's request stream (set by the `yubi dev` bootstrap). */
+	look?: boolean;
+	/** Extra look handlers by kind, on top of the built-in ones. */
+	lookHandlers?: Record<string, LookHandler>;
 };
 
 export type PickerHandle = {
@@ -33,6 +41,7 @@ export type PickerHandle = {
 	clear(id?: number): void;
 	setPins(pins: Pin[]): void;
 	readonly picking: boolean;
+	readonly lookAllowed: boolean;
 	readonly selection: readonly Target[];
 	destroy(): void;
 };
@@ -88,11 +97,27 @@ export function createPicker(options: PickerOptions): PickerHandle {
 	const refs = new Map<number, Element[]>();
 	let route = routeOf(win);
 	let raf = 0;
+	let look: LookClient | null = null;
 
 	const send = (message: Unmarked<ChildMessage>) => {
 		const data = { ...message, yubi: YUBI };
 		for (const o of origin ? [origin] : allowed) parent.postMessage(data, o);
 	};
+	if (options.look && parent !== win)
+		look = createLookClient({
+			doc,
+			win,
+			root,
+			handlers: {
+				page: lookPage,
+				dom: lookDom,
+				styles: lookStyles,
+				shot: lookShot,
+				...options.lookHandlers,
+			},
+			onServed: (kind, selector) =>
+				send(selector ? { type: 'look:served', kind, selector } : { type: 'look:served', kind }),
+		});
 	const viewport = () => ({ width: win.innerWidth, height: win.innerHeight });
 
 	const elementAt = (x: number, y: number): Element | null =>
@@ -169,6 +194,7 @@ export function createPicker(options: PickerOptions): PickerHandle {
 		if (msg.type === 'pick:start') setPicking(true);
 		else if (msg.type === 'pick:stop') setPicking(false);
 		else if (msg.type === 'pick:clear') clear(msg.id);
+		else if (msg.type === 'look:allow') look?.setAllowed(msg.allowed);
 		else setPins(msg.pins);
 	}
 
@@ -293,10 +319,14 @@ export function createPicker(options: PickerOptions): PickerHandle {
 		get picking() {
 			return picking;
 		},
+		get lookAllowed() {
+			return look?.allowed ?? false;
+		},
 		get selection() {
 			return selection.map((s) => s.info);
 		},
 		destroy() {
+			look?.destroy();
 			win.cancelAnimationFrame(raf);
 			win.clearInterval(routeTimer);
 			win.removeEventListener('keydown', onKey, true);
