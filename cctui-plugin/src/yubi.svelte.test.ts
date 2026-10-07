@@ -2,6 +2,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PREVIEWS_DISABLED, type Preview } from './previews.ts';
 import {
+	LOOK_ALLOWED_KEY,
+	LOOK_NOTICE_MS,
+	readLookAllowed,
 	relativePath,
 	START_POLL_MS,
 	START_PROMPT,
@@ -310,5 +313,70 @@ describe('YubiController.open', () => {
 		await ctl.open();
 		expect(ctl.boot).toBe('idle');
 		expect(ctl.selected).toBeNull();
+	});
+});
+
+describe('look consent', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+		localStorage.removeItem(LOOK_ALLOWED_KEY);
+	});
+
+	it('is on by default and remembered per user', () => {
+		expect(readLookAllowed(null)).toBe(true);
+		expect(readLookAllowed({ getItem: () => null, setItem() {} })).toBe(true);
+		expect(readLookAllowed({ getItem: () => 'false', setItem() {} })).toBe(false);
+		expect(readLookAllowed({ getItem: () => 'true', setItem() {} })).toBe(true);
+	});
+
+	it('tells the picker the consent on load and on every change, and persists it', async () => {
+		const { ctl, contentWindow, deliver } = await connected();
+		expect(ctl.lookAllowed).toBe(true);
+		ctl.onFrameLoad();
+		expect(contentWindow.postMessage.mock.calls.at(-1)?.[0]).toEqual({
+			yubi: 1,
+			type: 'look:allow',
+			allowed: true,
+		});
+		ctl.setLookAllowed(false);
+		expect(ctl.lookAllowed).toBe(false);
+		expect(localStorage.getItem(LOOK_ALLOWED_KEY)).toBe('false');
+		expect(contentWindow.postMessage.mock.calls.at(-1)?.[0]).toEqual({
+			yubi: 1,
+			type: 'look:allow',
+			allowed: false,
+		});
+		const before = contentWindow.postMessage.mock.calls.length;
+		deliver({ yubi: 1, type: 'route', route: '/' });
+		expect(contentWindow.postMessage.mock.calls.length).toBe(before + 1);
+		expect(contentWindow.postMessage.mock.calls.at(-1)?.[0]).toEqual({
+			yubi: 1,
+			type: 'look:allow',
+			allowed: false,
+		});
+		deliver({ yubi: 1, type: 'route', route: '/again' });
+		expect(contentWindow.postMessage.mock.calls.length).toBe(before + 1);
+
+		localStorage.setItem(LOOK_ALLOWED_KEY, 'false');
+		const later = new YubiController(
+			{ id: 's', machine_id: 'm', working_dir: '/w' },
+			{ insertText: vi.fn(), addFiles: vi.fn(), focus: vi.fn() },
+		);
+		expect(later.lookAllowed).toBe(false);
+	});
+
+	it('counts every served look and shows a short notice', async () => {
+		vi.useFakeTimers();
+		const { ctl, deliver } = await connected();
+		deliver({ yubi: 1, type: 'look:served', kind: 'styles', selector: '.card > h2' });
+		expect(ctl.looks).toBe(1);
+		expect(ctl.lookNotice).toBe('Agent looked: styles `.card > h2`');
+		deliver({ yubi: 1, type: 'look:served', kind: 'page' });
+		expect(ctl.looks).toBe(2);
+		expect(ctl.lookNotice).toBe('Agent looked: page');
+		await vi.advanceTimersByTimeAsync(LOOK_NOTICE_MS);
+		expect(ctl.lookNotice).toBe('');
+		expect(ctl.looks).toBe(2);
+		ctl.destroy();
 	});
 });

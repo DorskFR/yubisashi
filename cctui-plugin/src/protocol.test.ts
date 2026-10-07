@@ -56,6 +56,24 @@ describe('parseChildMessage', () => {
 		expect(parseChildMessage({ ...base, targets: [], viewport: {} })).toBeNull();
 	});
 
+	it('parses a served look, trimming the selector', () => {
+		expect(parseChildMessage({ yubi: YUBI, type: 'look:served', kind: 'page' })).toEqual({
+			yubi: YUBI,
+			type: 'look:served',
+			kind: 'page',
+		});
+		expect(
+			parseChildMessage({
+				yubi: YUBI,
+				type: 'look:served',
+				kind: 'dom',
+				selector: 'x'.repeat(300),
+			}),
+		).toEqual({ yubi: YUBI, type: 'look:served', kind: 'dom', selector: 'x'.repeat(200) });
+		expect(parseChildMessage({ yubi: YUBI, type: 'look:served' })).toBeNull();
+		expect(parseChildMessage({ yubi: YUBI, type: 'look:served', kind: 1 })).toBeNull();
+	});
+
 	it('parses the small messages strictly', () => {
 		expect(parseChildMessage({ yubi: YUBI, type: 'pick:state', picking: true })).toEqual({
 			yubi: YUBI,

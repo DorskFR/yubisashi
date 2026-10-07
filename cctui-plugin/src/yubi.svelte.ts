@@ -1,5 +1,6 @@
 import type { ComposerBridge, PluginSession } from '../sdk/types.ts';
 import { formatContextBlock } from './context.logic.ts';
+import { messages as m } from './messages.ts';
 import {
 	authUrl,
 	listPreviews,
@@ -24,6 +25,36 @@ export type BootStatus = 'idle' | 'pending' | 'timeout';
 export const START_PROMPT = 'start a yubisashi server now';
 export const START_POLL_MS = 2_000;
 export const START_TIMEOUT_MS = 180_000;
+export const LOOK_ALLOWED_KEY = 'yubisashi:look-allowed';
+export const LOOK_NOTICE_MS = 4_000;
+
+type Storage = { getItem(key: string): string | null; setItem(key: string, value: string): void };
+
+const storage = (): Storage | null => {
+	try {
+		return typeof localStorage === 'undefined' ? null : localStorage;
+	} catch {
+		return null;
+	}
+};
+
+/** The remembered consent; on until the user switched it off. */
+export function readLookAllowed(store: Storage | null = storage()): boolean {
+	try {
+		return store?.getItem(LOOK_ALLOWED_KEY) !== 'false';
+	} catch {
+		return true;
+	}
+}
+
+export function writeLookAllowed(allowed: boolean, store: Storage | null = storage()) {
+	try {
+		store?.setItem(LOOK_ALLOWED_KEY, String(allowed));
+	} catch {}
+}
+
+export const lookNotice = (msg: { kind: string; selector?: string }) =>
+	m.lookServed(msg.kind, msg.selector);
 
 /** The path (with query and hash) a typed address means inside the framed app. Any origin
  *  is dropped so the frame stays on the preview; non-http schemes yield `null`. */
@@ -80,7 +111,14 @@ export class YubiController {
 	boot = $state<BootStatus>('idle');
 	/** Previews are off server-side, so there is nothing to wait for. */
 	disabled = $state(false);
+	/** The user's consent to `yubi look`, remembered across panes. */
+	lookAllowed = $state(readLookAllowed());
+	/** Look requests served since the pane opened. */
+	looks = $state(0);
+	/** The last served look, shown briefly. */
+	lookNotice = $state('');
 	frame: HTMLIFrameElement | null = null;
+	private noticeTimer: ReturnType<typeof setTimeout> | null = null;
 	private sent = false;
 	private pollTimer: ReturnType<typeof setTimeout> | null = null;
 	private readonly session: PluginSession;
@@ -162,6 +200,8 @@ export class YubiController {
 	destroy() {
 		if (this.pollTimer) clearTimeout(this.pollTimer);
 		this.pollTimer = null;
+		if (this.noticeTimer) clearTimeout(this.noticeTimer);
+		this.noticeTimer = null;
 		if (this.boot === 'pending') this.boot = 'idle';
 	}
 
@@ -249,6 +289,24 @@ export class YubiController {
 	onFrameLoad() {
 		if (this.status === 'loading') this.status = 'waiting';
 		if (this.pins.length) this.post({ type: 'pins:set', pins: this.pins });
+		this.post({ type: 'look:allow', allowed: this.lookAllowed });
+	}
+
+	/** Flip the consent switch: remembered, and told to the framed picker at once. */
+	setLookAllowed(allowed: boolean) {
+		this.lookAllowed = allowed;
+		writeLookAllowed(allowed);
+		this.post({ type: 'look:allow', allowed });
+	}
+
+	private noteLook(msg: { kind: string; selector?: string }) {
+		this.looks++;
+		this.lookNotice = lookNotice(msg);
+		if (this.noticeTimer) clearTimeout(this.noticeTimer);
+		this.noticeTimer = setTimeout(() => {
+			this.lookNotice = '';
+			this.noticeTimer = null;
+		}, LOOK_NOTICE_MS);
 	}
 
 	post(msg: ParentPayload) {
@@ -267,7 +325,10 @@ export class YubiController {
 		if (!isTrustedEvent(e, this.frame, this.origin)) return;
 		const msg = parseChildMessage(e.data);
 		if (!msg) return;
-		this.status = 'connected';
+		if (this.status !== 'connected') {
+			this.status = 'connected';
+			this.post({ type: 'look:allow', allowed: this.lookAllowed });
+		}
 		switch (msg.type) {
 			case 'pick:state':
 				this.picking = msg.picking;
@@ -286,6 +347,9 @@ export class YubiController {
 				this.insertSelection(msg);
 				break;
 			case 'pick:hover':
+				break;
+			case 'look:served':
+				this.noteLook(msg);
 				break;
 		}
 	}
