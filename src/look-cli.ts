@@ -4,6 +4,9 @@ import { parseArgs } from 'node:util';
 import { type DevState, readDevState, STATE_DIR, STATE_FILE } from './dev.ts';
 import { DEFAULT_LOOK_TIMEOUT } from './look.ts';
 import type { PageInfo } from './picker/look.ts';
+import type { DomResult } from './picker/look-dom.ts';
+import { DEFAULT_DOM_DEPTH, DEFAULT_DOM_MAX_BYTES } from './picker/look-dom.ts';
+import type { StylesResult } from './picker/look-styles.ts';
 
 export const LOOK_USAGE = `Usage: yubi look <what> [selector] [options]
 
@@ -12,6 +15,15 @@ Asks the browser that has the app open in the yubisashi pane what it shows right
 consent (the pane's "Let the agent look" switch).
 
   page                    route, title, viewport, scroll, device pixel ratio, focused element
+  dom [selector]          the live DOM under selector (default body), compact, with
+                          data-yubi-src="file:line" on Svelte elements
+      --depth N           replace subtrees deeper than N with <!-- N children --> (default ${DEFAULT_DOM_DEPTH})
+      --max-bytes N       hard cap on the output (default ${DEFAULT_DOM_MAX_BYTES})
+  styles <selector>       computed style of the first match (only what differs from a bare
+                          <tag>), box model, rect, visibility, source and component chain
+      --props a,b,…       only these properties
+      --all               every computed property
+      --pseudo ::before   style a pseudo-element instead
 
 Options:
   --json                  raw JSON instead of text
@@ -140,6 +152,47 @@ export function formatPage(info: PageInfo): string {
 	].join('\n');
 }
 
+const matchesText = (m: { count: number; first: string[] }) =>
+	m.count ? `\n${m.count} matches, first: ${m.first.join(', ')}` : '';
+
+export function formatDom(result: DomResult): string {
+	if ('error' in result) return `${result.error}${matchesText(result.matches)}`;
+	return result.html.replace(/\n$/, '');
+}
+
+const boxLine = (name: string, b: { top: number; right: number; bottom: number; left: number }) =>
+	row(name, `${b.top} ${b.right} ${b.bottom} ${b.left}`);
+
+export function formatStyles(result: StylesResult): string {
+	if ('error' in result) return `${result.error}${matchesText(result.matches)}`;
+	const lines = [row('element', `<${result.tag}> ${result.selector}${result.pseudo ?? ''}`)];
+	if (result.source) lines.push(row('source', `${result.source.file}:${result.source.line}`));
+	const chain = result.stack.filter((f) => f.name || f.file).slice(0, 4);
+	if (chain.length)
+		lines.push(
+			row('rendered', chain.map((f) => `${f.name ?? f.type} ${f.file}:${f.line}`).join(' ← ')),
+		);
+	const r = result.rect;
+	lines.push(row('rect', `${r.x},${r.y} ${r.width}x${r.height}`));
+	lines.push(row('content', `${result.box.content.width}x${result.box.content.height}`));
+	lines.push(boxLine('padding', result.box.padding));
+	lines.push(boxLine('border', result.box.border));
+	lines.push(boxLine('margin', result.box.margin));
+	lines.push(
+		row(
+			'visible',
+			result.visibility.visible ? 'yes' : `no (${result.visibility.reasons.join('; ')})`,
+		),
+	);
+	const vars = Object.entries(result.variables);
+	if (vars.length) lines.push(row('vars', vars.map(([k, v]) => `${k}: ${v}`).join('; ')));
+	lines.push('');
+	const names = Object.keys(result.styles);
+	if (!names.length) lines.push('(nothing differs from a bare element)');
+	for (const name of names) lines.push(`${name}: ${result.styles[name]}`);
+	return lines.join('\n');
+}
+
 export type LookCommand = {
 	kind: string;
 	args: Record<string, unknown>;
@@ -153,6 +206,11 @@ export function parseLook(argv: string[]): LookCommand | { usage: string; error?
 		options: {
 			json: { type: 'boolean', default: false },
 			timeout: { type: 'string' },
+			depth: { type: 'string' },
+			'max-bytes': { type: 'string' },
+			props: { type: 'string' },
+			all: { type: 'boolean', default: false },
+			pseudo: { type: 'string' },
 			help: { type: 'boolean', short: 'h', default: false },
 		},
 		allowPositionals: true,
@@ -175,6 +233,33 @@ export function parseLook(argv: string[]): LookCommand | { usage: string; error?
 			if (selector !== undefined)
 				return { usage: LOOK_USAGE, error: 'look page takes no selector' };
 			return { ...base, kind, args: {}, format: (d) => formatPage(d as PageInfo) };
+		case 'dom': {
+			const depth = values.depth === undefined ? undefined : Number(values.depth);
+			const maxBytes = values['max-bytes'] === undefined ? undefined : Number(values['max-bytes']);
+			if (depth !== undefined && !(Number.isInteger(depth) && depth >= 0))
+				return { usage: LOOK_USAGE, error: `invalid --depth ${values.depth}` };
+			if (maxBytes !== undefined && !(maxBytes > 0))
+				return { usage: LOOK_USAGE, error: `invalid --max-bytes ${values['max-bytes']}` };
+			return {
+				...base,
+				kind,
+				args: { selector: selector ?? 'body', depth, maxBytes },
+				format: (d) => formatDom(d as DomResult),
+			};
+		}
+		case 'styles': {
+			if (!selector) return { usage: LOOK_USAGE, error: 'look styles needs a selector' };
+			const props = values.props
+				?.split(',')
+				.map((p) => p.trim())
+				.filter(Boolean);
+			return {
+				...base,
+				kind,
+				args: { selector, props, all: values.all, pseudo: values.pseudo },
+				format: (d) => formatStyles(d as StylesResult),
+			};
+		}
 		default:
 			return { usage: LOOK_USAGE, error: kind ? `unknown look "${kind}"` : undefined };
 	}
@@ -194,6 +279,19 @@ export async function runLook(argv: string[], io: LookIo): Promise<number> {
 	if ('code' in result) {
 		io.stderr(`yubi look: ${result.message}\n`);
 		return result.code;
+	}
+	const data = result.data;
+	if (
+		typeof data === 'object' &&
+		data !== null &&
+		typeof (data as { error?: unknown }).error === 'string'
+	) {
+		io.stderr(
+			command.json
+				? `${JSON.stringify(data, null, '\t')}\n`
+				: `yubi look: ${command.format(data)}\n`,
+		);
+		return EXIT.failed;
 	}
 	io.stdout(
 		command.json

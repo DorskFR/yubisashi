@@ -7,6 +7,8 @@ export {
 	lookPage,
 	type PageInfo,
 } from './look.ts';
+export { type DomResult, lookDom, serializeDom } from './look-dom.ts';
+export { lookStyles, type StylesResult } from './look-styles.ts';
 export {
 	type ChildMessage,
 	createPicker,

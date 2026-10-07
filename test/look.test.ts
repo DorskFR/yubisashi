@@ -217,6 +217,87 @@ describe('look transport', () => {
 	});
 });
 
+describe('look dom and styles', () => {
+	test('look dom annotates Svelte elements with their source and stays under the byte cap', async () => {
+		const run = await yubi(dir, 'dom');
+		assert.equal(run.code, 0, run.stderr);
+		assert.match(
+			run.stdout,
+			/<button class="retry[^"]*" type="button" data-yubi-src="src\/lib\/Row.svelte:3">/,
+		);
+		assert.match(run.stdout, /Retry import/);
+		assert.ok(run.stdout.length <= 40 * 1024 + 64, `output is ${run.stdout.length} bytes`);
+		assert.match(run.stdout, /<!-- truncated -->/);
+		assert.doesNotMatch(run.stdout, /data-yubi="root"/, 'the picker nodes are left out');
+
+		const json = await yubi(dir, 'dom', 'button.retry', '--json');
+		assert.equal(json.code, 0, json.stderr);
+		const result = JSON.parse(json.stdout);
+		assert.equal(result.truncated, false);
+		assert.equal(result.matches, 1);
+		assert.match(result.html, /^<button class="retry/);
+	});
+
+	test('look dom reports the live form value and collapses past --depth', async () => {
+		await app.locator('#note').fill('typed');
+		const run = await yubi(dir, 'dom', '#note');
+		assert.equal(run.code, 0, run.stderr);
+		assert.match(run.stdout, /<input id="note" aria-label="note" :value="typed">/);
+		const shallow = await yubi(dir, 'dom', '--depth', '0');
+		assert.equal(shallow.code, 0, shallow.stderr);
+		assert.match(shallow.stdout, /^<body[^>]*><!-- \d+ children --><\/body>$/);
+	});
+
+	test('look dom explains a selector that matches nothing or several elements', async () => {
+		const none = await yubi(dir, 'dom', '.nope');
+		assert.notEqual(none.code, 0);
+		assert.match(none.stderr, /no element matches "\.nope"/);
+		const many = await yubi(dir, 'dom', 'p.line');
+		assert.notEqual(many.code, 0);
+		assert.match(many.stderr, /600 elements match "p\.line"/);
+		assert.match(many.stderr, /600 matches, first: /);
+	});
+
+	test('look styles reports a non-default property, the box, and the source line', async () => {
+		const json = await yubi(dir, 'styles', 'button.retry', '--json');
+		assert.equal(json.code, 0, json.stderr);
+		const result = JSON.parse(json.stdout);
+		assert.equal(result.styles.color, 'rgb(200, 0, 0)');
+		assert.equal(result.styles.display, undefined, 'defaults are left out');
+		assert.deepEqual(result.source, { file: 'src/lib/Row.svelte', line: 3, column: 1 });
+		assert.deepEqual(result.box.padding, { top: 4, right: 8, bottom: 4, left: 8 });
+		assert.equal(result.visibility.visible, true);
+		assert.ok(result.rect.width > 0);
+		assert.deepEqual(
+			result.stack.map((f: { name: string }) => f.name),
+			['<Row>'],
+		);
+
+		const text = await yubi(dir, 'styles', 'button.retry');
+		assert.equal(text.code, 0, text.stderr);
+		assert.match(text.stdout, /^source {3}src\/lib\/Row\.svelte:3$/m);
+		assert.match(text.stdout, /^color: rgb\(200, 0, 0\)$/m);
+		assert.match(text.stdout, /^padding {2}4 8 4 8$/m);
+
+		const picked = await yubi(dir, 'styles', 'button.retry', '--props', 'color,display', '--json');
+		assert.deepEqual(JSON.parse(picked.stdout).styles, {
+			color: 'rgb(200, 0, 0)',
+			display: 'inline-block',
+		});
+	});
+
+	test('look styles tells when an element is off-screen and needs a selector', async () => {
+		const far = await yubi(dir, 'styles', 'p[data-i="599"]', '--json');
+		assert.equal(far.code, 0, far.stderr);
+		const visibility = JSON.parse(far.stdout).visibility;
+		assert.equal(visibility.visible, false);
+		assert.ok(visibility.reasons.includes('off-screen'));
+		const bare = await yubi(dir, 'styles');
+		assert.notEqual(bare.code, 0);
+		assert.match(bare.stderr, /needs a selector/);
+	});
+});
+
 describe('look consent', () => {
 	test('with the switch off, look page exits non-zero with the refusal', async () => {
 		await send({ type: 'look:allow', allowed: false });
