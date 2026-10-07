@@ -170,6 +170,7 @@ describe('YubiController.post', () => {
 			return data;
 		});
 		expect(posted).toEqual([
+			{ yubi: 1, type: 'look:allow', allowed: true },
 			{ yubi: 1, type: 'pick:clear', id: 1 },
 			{ yubi: 1, type: 'pins:set', pins: [{ id: 1, selector: 'body > h1' }] },
 		]);
