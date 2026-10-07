@@ -242,10 +242,13 @@ describe('look dom and styles', () => {
 		await app.locator('#note').fill('typed');
 		const run = await yubi(dir, 'dom', '#note');
 		assert.equal(run.code, 0, run.stderr);
-		assert.match(run.stdout, /<input id="note" aria-label="note" :value="typed">/);
+		assert.match(
+			run.stdout,
+			/<input id="note" aria-label="note" :value="typed" data-yubi-src="src\/routes\/\+page\.svelte:\d+">/,
+		);
 		const shallow = await yubi(dir, 'dom', '--depth', '0');
 		assert.equal(shallow.code, 0, shallow.stderr);
-		assert.match(shallow.stdout, /^<body[^>]*><!-- \d+ children --><\/body>$/);
+		assert.match(shallow.stdout.trim(), /^<body[^>]*><!-- \d+ children --><\/body>$/);
 	});
 
 	test('look dom explains a selector that matches nothing or several elements', async () => {
