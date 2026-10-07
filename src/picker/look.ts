@@ -46,17 +46,17 @@ export function createLookClient(options: LookClientOptions): LookClient {
 	let lastActive = 0;
 	let destroyed = false;
 
-	const post = (path: string, body: unknown) =>
+	const post = (path: string, body: unknown, keepalive = false) =>
 		win
 			.fetch(`${base}${path}`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify(body),
-				keepalive: true,
+				keepalive,
 			})
 			.catch(() => undefined);
 
-	const pushState = () => post(`${STATE}${id}`, { allowed });
+	const pushState = () => post(`${STATE}${id}`, { allowed }, true);
 
 	const active = () => {
 		const now = Date.now();
