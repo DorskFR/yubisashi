@@ -1,6 +1,6 @@
 {
 	"name": "@dorsk/yubisashi",
-	"version": "0.6.0",
+	"version": "0.6.1",
 	"description": "Point at elements of your running app from a review panel: an iframe picker, a Vite plugin and a `yubi dev` proxy that inject it in dev.",
 	"type": "module",
 	"license": "MIT",
@@ -75,7 +75,7 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.12",
-		"@dorsk/tsumikit": "^0.61.0",
+		"@dorsk/tsumikit": "^0.80.2",
 		"@sveltejs/kit": "^2.70.3",
 		"@sveltejs/vite-plugin-svelte": "^7.3.1",
 		"@types/node": "^22.18.0",
