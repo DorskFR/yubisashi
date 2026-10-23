@@ -27,11 +27,12 @@
 		ctl.previews.map((p) => ({ value: p.id, label: m.preview(p.port), hint: new URL(p.url).host }))
 	);
 
-	let applied: string | undefined;
+	let applied: string | null = null;
 	$effect(() => {
-		if (params.url === applied) return;
-		applied = params.url;
-		void ctl.open(params.url ?? '');
+		const wanted = params.url ?? '';
+		if (wanted === applied) return;
+		applied = wanted;
+		void ctl.open(wanted);
 	});
 	$effect(() => () => ctl.destroy());
 
