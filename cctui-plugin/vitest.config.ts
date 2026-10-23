@@ -9,5 +9,10 @@ export default defineConfig({
 	root,
 	plugins: [svelte({ configFile: false })],
 	resolve: { conditions: ['browser'] },
-	test: { include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'], testTimeout: 60_000 },
+	test: {
+		include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
+		testTimeout: 60_000,
+		// Node's own localStorage global shadows happy-dom's.
+		execArgv: ['--no-experimental-webstorage'],
+	},
 });
