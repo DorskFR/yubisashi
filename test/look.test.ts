@@ -536,6 +536,25 @@ describe('yubi go', () => {
 		assert.equal(await route(), '/b');
 	});
 
+	test('a reload that cuts a go short still lands on the requested route', async () => {
+		assert.equal(await route(), '/b');
+		await app.evaluate(() => {
+			const cut = (e: Event) => {
+				if (!(e.target as Element).matches?.('a[data-yubi="go"]')) return;
+				removeEventListener('click', cut, true);
+				e.preventDefault();
+				location.reload();
+			};
+			addEventListener('click', cut, true);
+		});
+		const run = await cli(dir, 'go', '/a', '--json');
+		assert.equal(run.code, 0, run.stderr);
+		const out = JSON.parse(run.stdout);
+		assert.equal(out.from, '/b');
+		assert.equal(out.page.route, '/a');
+		assert.equal(await route(), '/a');
+	});
+
 	test('refuses while the user is typing unsaved text', async () => {
 		const toA = await cli(dir, 'go', '/a');
 		assert.equal(toA.code, 0, toA.stderr);

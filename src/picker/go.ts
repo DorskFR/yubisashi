@@ -126,6 +126,21 @@ function scrollToMatch(doc: Document, root: Element, selector: string): Scrolled
 
 type Notify = (from: string, to: string) => void;
 
+export const ROUTER_WAIT_MS = 3_000;
+
+const isSvelteKit = (win: Window) => Object.keys(win).some((k) => k.startsWith('__sveltekit_'));
+
+/** Hands the navigation to the app's router. A SvelteKit page that has not started its router
+ *  yet (still hydrating) gets a few more tries before the caller falls back to a full load. */
+async function viaRouter(doc: Document, win: Window, url: URL, cap: number) {
+	const deadline = Date.now() + (isSvelteKit(win) ? Math.min(cap, ROUTER_WAIT_MS) : 0);
+	for (;;) {
+		if (clickThrough(doc, win, url) || pushThrough(win, url)) return true;
+		if (Date.now() >= deadline) return false;
+		await sleep(100);
+	}
+}
+
 /** Resolves with the "document replaced" answer if the page unloads before `job` is done. */
 function unlessLeaving(ctx: LookContext, from: string, to: () => string, notify: Notify) {
 	let left = false;
@@ -233,19 +248,22 @@ export function createGo(notify: Notify): LookHandler {
 			};
 		const target = routeOfUrl(url);
 		const guard = unlessLeaving(ctx, from, () => target, notify);
-		if (clickThrough(doc, win, url) || pushThrough(win, url))
-			return guard.race(
-				(async (): Promise<GoResult> => {
-					if (target !== from) await waitFor(() => guard.left() || routeOf(win) !== from, cap);
-					if (guard.left()) return new Promise<never>(() => {});
-					const result = await arrived(ctx, from, scroll, cap);
-					notify(from, result.page.route);
-					return result;
-				})(),
-			);
-		guard.cancel();
-		notify(from, target);
-		ctx.after?.(() => win.location.assign(url.href));
-		return { full: true, from, to: target, instance: ctx.instance };
+		return guard.race(
+			(async (): Promise<GoResult> => {
+				const routed = await viaRouter(doc, win, url, cap);
+				if (guard.left()) return new Promise<never>(() => {});
+				if (!routed) {
+					guard.cancel();
+					notify(from, target);
+					ctx.after?.(() => win.location.assign(url.href));
+					return { full: true, from, to: target, instance: ctx.instance };
+				}
+				if (target !== from) await waitFor(() => guard.left() || routeOf(win) !== from, cap);
+				if (guard.left()) return new Promise<never>(() => {});
+				const result = await arrived(ctx, from, scroll, cap);
+				notify(from, result.page.route);
+				return result;
+			})(),
+		);
 	};
 }

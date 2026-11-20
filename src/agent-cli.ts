@@ -95,6 +95,7 @@ export async function go(
 	io: LookIo,
 	args: { to?: string; action?: string; scroll?: string },
 	timeoutMs: number,
+	retried = false,
 ): Promise<GoOutput | Failure> {
 	const deadline = Date.now() + timeoutMs;
 	const first = await ask(io, 'go', args, timeoutMs);
@@ -105,6 +106,11 @@ export async function go(
 	if (!result.full) return result;
 	const landed = await nextPage(io, result.instance, deadline);
 	if (isFailure(landed)) return landed;
+	// Something else replaced the page mid-navigation (a dev-server reload): ask the new one.
+	if (args.to && !retried && landed.data.route !== result.to) {
+		const again = await go(io, args, Math.max(1000, deadline - Date.now()), true);
+		return isFailure(again) ? again : { ...again, from: result.from };
+	}
 	const out: GoOutput = { from: result.from, page: landed.data };
 	if (!args.scroll) return out;
 	const left = Math.max(1000, deadline - Date.now());
