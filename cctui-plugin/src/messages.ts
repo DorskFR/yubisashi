@@ -28,6 +28,12 @@ export const messages = {
 	lookServed: (kind: string, selector?: string) =>
 		`Agent looked: ${kind}${selector ? ` \`${selector}\`` : ''}`,
 	looks: (count: number) => `${count} looked`,
+	agentNavigated: (from: string, to: string) => `Agent navigated: ${from} → ${to}`,
+	agentShowed: (label: string) => `Agent showed: ${label}`,
+	agentShowedAgain: 'Scroll to it again',
+	activityLabel: 'What the agent did in the app',
+	hmrLost: 'Hot reload lost: your edits no longer reach this page.',
+	hmrReload: 'Reload page',
 	starting: 'Starting yubisashi…',
 	startTimeout: "Didn't start — check the conversation.",
 	retry: 'Retry',

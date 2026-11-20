@@ -1,3 +1,5 @@
+import { createGo } from './go.ts';
+import { HMR_EVENT } from './hmr-watch.ts';
 import { describe, label } from './inspect.ts';
 import { createLookClient, type LookClient, type LookHandler, lookPage } from './look.ts';
 import { lookDom } from './look-dom.ts';
@@ -14,6 +16,7 @@ import {
 	type Viewport,
 	YUBI,
 } from './protocol.ts';
+import { createShow, type Show } from './show.ts';
 
 export { isChildMessage, isParentMessage, YUBI } from './protocol.ts';
 export type { ChildMessage, Frame, ParentMessage, Pin, Target, Unmarked, Viewport };
@@ -98,12 +101,19 @@ export function createPicker(options: PickerOptions): PickerHandle {
 	let route = routeOf(win);
 	let raf = 0;
 	let look: LookClient | null = null;
+	let show: Show | null = null;
 
 	const send = (message: Unmarked<ChildMessage>) => {
 		const data = { ...message, yubi: YUBI };
 		for (const o of origin ? [origin] : allowed) parent.postMessage(data, o);
 	};
-	if (options.look && parent !== win)
+	if (options.look && parent !== win) {
+		show = createShow({
+			doc,
+			win,
+			root,
+			onShown: (id, text) => send({ type: 'agent:showed', id, label: text }),
+		});
 		look = createLookClient({
 			doc,
 			win,
@@ -113,11 +123,21 @@ export function createPicker(options: PickerOptions): PickerHandle {
 				dom: lookDom,
 				styles: lookStyles,
 				shot: lookShot,
+				go: createGo((from, to) => send({ type: 'agent:navigated', from, to })),
+				show: show.handler,
 				...options.lookHandlers,
 			},
-			onServed: (kind, selector) =>
-				send(selector ? { type: 'look:served', kind, selector } : { type: 'look:served', kind }),
+			onServed: (kind, selector) => {
+				if (kind === 'go' || kind === 'show') return;
+				send(selector ? { type: 'look:served', kind, selector } : { type: 'look:served', kind });
+			},
 		});
+	}
+	const hmrStatus = () => (win as Window & { __yubiHmr?: { status?: string } }).__yubiHmr?.status;
+	const onHmr = () => {
+		const status = hmrStatus();
+		if (status === 'connected' || status === 'lost') send({ type: 'hmr', status });
+	};
 	const viewport = () => ({ width: win.innerWidth, height: win.innerHeight });
 
 	const elementAt = (x: number, y: number): Element | null =>
@@ -195,6 +215,7 @@ export function createPicker(options: PickerOptions): PickerHandle {
 		else if (msg.type === 'pick:stop') setPicking(false);
 		else if (msg.type === 'pick:clear') clear(msg.id);
 		else if (msg.type === 'look:allow') look?.setAllowed(msg.allowed);
+		else if (msg.type === 'show:focus') show?.focus(msg.id);
 		else setPins(msg.pins);
 	}
 
@@ -307,9 +328,11 @@ export function createPicker(options: PickerOptions): PickerHandle {
 	glass.addEventListener('wheel', onWheel, { passive: true });
 	win.addEventListener('keydown', onKey, true);
 	win.addEventListener('message', onMessage);
+	win.addEventListener(HMR_EVENT, onHmr);
 	const routeTimer = win.setInterval(syncRoute, options.routeEveryMs ?? 400);
 	raf = win.requestAnimationFrame(draw);
 	send({ type: 'route', route });
+	onHmr();
 
 	return {
 		start: () => setPicking(true),
@@ -327,6 +350,8 @@ export function createPicker(options: PickerOptions): PickerHandle {
 		},
 		destroy() {
 			look?.destroy();
+			show?.destroy();
+			win.removeEventListener(HMR_EVENT, onHmr);
 			win.cancelAnimationFrame(raf);
 			win.clearInterval(routeTimer);
 			win.removeEventListener('keydown', onKey, true);

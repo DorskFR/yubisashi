@@ -25,7 +25,11 @@ the proxy to the picker, so the agent's `yubi look` can read the framed document
   visibility, variables) and `shot` (DOM raster via `/__yubi/raster.js`, a lazy chunk of
   `modern-screenshot` served by the proxy). The pane's "Let the agent look" switch travels as
   `look:allow` to the picker, which tells the proxy; every answered request goes back to the
-  pane as `look:served`.
+  pane as `look:served`. `go` (navigate through the app's router) and `show` (numbered
+  highlights) ride the same channel and switch, and report to the pane as `agent:navigated` /
+  `agent:showed`. A dropped stream keeps its tab and pending requests for a grace period and
+  gets them again on reconnect. `/__yubi/hmr.js`, loaded before the dev server's client, watches
+  the HMR socket so the pane can say when hot reload is lost.
 
 ```
 yubi look ──token──▶ proxy ──SSE──▶ picker (framed) ──postMessage look:served──▶ pane

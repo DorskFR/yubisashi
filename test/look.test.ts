@@ -32,12 +32,14 @@ const HARNESS = `<!doctype html><html><body style="margin:0">
 
 type Run = { code: number; stdout: string; stderr: string };
 
-const yubi = (cwd: string, ...args: string[]) =>
+const cli = (cwd: string, ...args: string[]) =>
 	new Promise<Run>((resolve) =>
-		execFile(process.execPath, [CLI, 'look', ...args], { cwd }, (err, stdout, stderr) =>
+		execFile(process.execPath, [CLI, ...args], { cwd }, (err, stdout, stderr) =>
 			resolve({ code: (err as { code?: number } | null)?.code ?? 0, stdout, stderr }),
 		),
 	);
+
+const yubi = (cwd: string, ...args: string[]) => cli(cwd, 'look', ...args);
 
 let harness: Server;
 let harnessOrigin: string;
@@ -351,10 +353,232 @@ describe('look shot', () => {
 		assert.equal(await rasterLoads(), 1);
 	});
 
+	test('a viewport shot of the long page scrolled down returns, and the looks after it answer', async () => {
+		await app.evaluate(() => window.scrollTo(0, 6000));
+		const out = join(dir, 'scrolled.png');
+		const run = await yubi(dir, 'shot', '--out', out, '--timeout', '20');
+		assert.equal(run.code, 0, run.stderr);
+		assert.deepEqual(pngSize(readFileSync(out)), { width: 1000, height: 700 });
+		for (let i = 0; i < 5; i++) {
+			const styles = await yubi(dir, 'styles', 'button.retry', '--props', 'color');
+			assert.equal(styles.code, 0, `call ${i}: ${styles.stderr}`);
+		}
+		await app.evaluate(() => window.scrollTo(0, 0));
+	});
+
+	test('a shot over its time budget fails with that reason, not a lost browser', async () => {
+		const state = JSON.parse(readFileSync(join(dir, '.yubisashi', 'dev.json'), 'utf8'));
+		const res = await fetch(`${origin}/__yubi/look`, {
+			method: 'POST',
+			headers: { authorization: `Bearer ${state.token}`, 'content-type': 'application/json' },
+			body: JSON.stringify({ kind: 'shot', args: { budget: 1 } }),
+		});
+		assert.equal(res.status, 422);
+		assert.match(((await res.json()) as { error: string }).error, /time budget/);
+		await app.waitForFunction(
+			() => (document.querySelector('[data-yubi="root"]') as HTMLElement).style.display === '',
+		);
+		const info = await yubi(dir, 'page');
+		assert.equal(info.code, 0, info.stderr);
+	});
+
 	test('a selector that matches nothing is an error', async () => {
 		const run = await yubi(dir, 'shot', '.nope');
 		assert.notEqual(run.code, 0);
 		assert.match(run.stderr, /no element matches "\.nope"/);
+	});
+});
+
+type Rect = { x: number; y: number; width: number; height: number };
+
+const rectOf = (selector: string) =>
+	app.evaluate((s) => {
+		const r = (document.querySelector(s) as Element).getBoundingClientRect();
+		return { x: r.x, y: r.y, width: r.width, height: r.height };
+	}, selector);
+
+const highlights = () =>
+	app.evaluate(() =>
+		[...document.querySelectorAll('[data-yubi="show"]')].map((b) => {
+			const r = b.getBoundingClientRect();
+			return {
+				id: b.getAttribute('data-id'),
+				rect: { x: r.x, y: r.y, width: r.width, height: r.height },
+				pointer: getComputedStyle(b).pointerEvents,
+				tagPointer: getComputedStyle(b.firstElementChild as Element).pointerEvents,
+				tag: b.firstElementChild?.textContent ?? '',
+			};
+		}),
+	);
+
+const near = (a: Rect, b: Rect) =>
+	Math.abs(a.x - b.x) < 1 &&
+	Math.abs(a.y - b.y) < 1 &&
+	Math.abs(a.width - b.width) < 1 &&
+	Math.abs(a.height - b.height) < 1;
+
+describe('yubi show', () => {
+	test('draws an overlay on the element rect that tracks a scroll and leaves pointer events alone', async () => {
+		await app.evaluate(() => window.scrollTo(0, 0));
+		const run = await cli(dir, 'show', 'button.retry', '--label', 'this one', '--json');
+		assert.equal(run.code, 0, run.stderr);
+		const result = JSON.parse(run.stdout);
+		assert.equal(result.matches, 1);
+		assert.equal(result.ttl, 10);
+		assert.equal(result.shown[0].n, 1);
+		assert.equal(result.shown[0].label, 'this one');
+		assert.equal(result.shown[0].source, 'src/lib/Row.svelte:3');
+		const [box] = await highlights();
+		assert.ok(box, 'one highlight is drawn');
+		assert.ok(near(box.rect, await rectOf('button.retry')), JSON.stringify(box.rect));
+		assert.equal(box.pointer, 'none');
+		assert.equal(box.tagPointer, 'auto');
+		assert.match(box.tag, /^1 this one/);
+
+		await app.evaluate(() => window.scrollTo(0, 150));
+		await app.waitForFunction(() => {
+			const b = document.querySelector('[data-yubi="show"]')?.getBoundingClientRect();
+			const e = document.querySelector('button.retry')?.getBoundingClientRect();
+			return !!b && !!e && Math.abs(b.y - e.y) < 1 && e.y < 0;
+		});
+		await app.evaluate(() => window.scrollTo(0, 0));
+		const shown = (await messages()).filter((m) => m.type === 'agent:showed');
+		assert.deepEqual(shown.at(-1), { yubi: 1, type: 'agent:showed', id: 1, label: 'this one' });
+		const looks = await served();
+		assert.equal(looks.filter((m) => m.type === 'look:served' && m.kind === 'show').length, 0);
+	});
+
+	test('calls stack with increasing numbers and --clear removes them all', async () => {
+		const second = await cli(dir, 'show', 'h1');
+		assert.equal(second.code, 0, second.stderr);
+		assert.match(second.stdout, /^2 {2}/m);
+		assert.match(second.stdout, /^showing 1 of 1 match for 10s$/m);
+		const third = await cli(dir, 'show', 'p.line[data-i="3"]', '--json');
+		assert.equal(JSON.parse(third.stdout).shown[0].n, 3);
+		assert.deepEqual(
+			(await highlights()).map((h) => h.id),
+			['1', '2', '3'],
+		);
+		const cleared = await cli(dir, 'show', '--clear');
+		assert.equal(cleared.code, 0, cleared.stderr);
+		assert.equal(cleared.stdout.trim(), 'cleared 3 highlights');
+		assert.equal((await highlights()).length, 0);
+	});
+
+	test('--all highlights every match and --ttl removes them', async () => {
+		const both = 'p.line[data-i="1"], p.line[data-i="2"]';
+		const run = await cli(dir, 'show', both, '--all', '--ttl', '1');
+		assert.equal(run.code, 0, run.stderr);
+		assert.match(run.stdout, /^showing 2 of 2 matches for 1s$/m);
+		assert.equal((await highlights()).length, 2);
+		await app.waitForFunction(() => !document.querySelector('[data-yubi="show"]'), null, {
+			timeout: 5000,
+		});
+	});
+
+	test('a selector that matches nothing is an error', async () => {
+		const run = await cli(dir, 'show', '.nope');
+		assert.notEqual(run.code, 0);
+		assert.match(run.stderr, /no element matches "\.nope"/);
+		assert.equal((await highlights()).length, 0);
+	});
+});
+
+const route = () => app.evaluate(() => location.pathname);
+const kept = () => app.evaluate(() => (window as { __kept?: number }).__kept);
+
+describe('yubi go', () => {
+	before(async () => {
+		await app.locator('#note').fill('');
+		await app.locator('#note').blur();
+		await app.evaluate(() => window.scrollTo(0, 0));
+	});
+
+	test('go /b from /a changes the route without a full reload and prints the new route', async () => {
+		const toA = await cli(dir, 'go', '/a');
+		assert.equal(toA.code, 0, toA.stderr);
+		assert.match(toA.stdout, /^navigated \/ → \/a$/m);
+		assert.match(toA.stdout, /^route {4}\/a$/m);
+		await app.evaluate(() => {
+			(window as { __kept?: number }).__kept = 1;
+		});
+		const toB = await cli(dir, 'go', '/b', '--json');
+		assert.equal(toB.code, 0, toB.stderr);
+		const out = JSON.parse(toB.stdout);
+		assert.equal(out.from, '/a');
+		assert.equal(out.page.route, '/b');
+		assert.equal(out.page.title, 'Page B');
+		assert.equal(await route(), '/b');
+		assert.equal(await kept(), 1, 'the document was not reloaded');
+		const navigated = (await messages()).filter((m) => m.type === 'agent:navigated');
+		assert.deepEqual(navigated.at(-1), { yubi: 1, type: 'agent:navigated', from: '/a', to: '/b' });
+	});
+
+	test('back and forward move through the app history; --scroll brings an element into view', async () => {
+		const back = await cli(dir, 'go', 'back');
+		assert.equal(back.code, 0, back.stderr);
+		assert.match(back.stdout, /^route {4}\/a$/m);
+		const forward = await cli(dir, 'go', 'forward');
+		assert.equal(forward.code, 0, forward.stderr);
+		assert.match(forward.stdout, /^route {4}\/b$/m);
+		const scrolled = await cli(dir, 'go', '/b', '--scroll', '#bottom', '--json');
+		assert.equal(scrolled.code, 0, scrolled.stderr);
+		const out = JSON.parse(scrolled.stdout);
+		assert.equal(out.scrolled, '#bottom');
+		assert.ok(out.page.scroll.y > 0, `scrolled to ${out.page.scroll.y}`);
+		assert.equal(await kept(), 1);
+	});
+
+	test('a cross-origin URL is refused and the route stays', async () => {
+		const run = await cli(dir, 'go', 'https://example.com/elsewhere');
+		assert.notEqual(run.code, 0);
+		assert.match(run.stderr, /cross-origin URL refused/);
+		assert.equal(await route(), '/b');
+	});
+
+	test('refuses while the user is typing unsaved text', async () => {
+		const toA = await cli(dir, 'go', '/a');
+		assert.equal(toA.code, 0, toA.stderr);
+		await app.locator('#draft').fill('half a sentence');
+		try {
+			const run = await cli(dir, 'go', '/b');
+			assert.notEqual(run.code, 0);
+			assert.match(run.stderr, /user is busy: typing in #draft/);
+			assert.equal(await route(), '/a');
+		} finally {
+			await app.locator('#draft').fill('');
+			await app.locator('#draft').blur();
+		}
+	});
+
+	test('with the switch off, go errors and the route does not change', async () => {
+		const toA = await cli(dir, 'go', '/a');
+		assert.equal(toA.code, 0, toA.stderr);
+		await send({ type: 'look:allow', allowed: false });
+		await new Promise((r) => setTimeout(r, 300));
+		try {
+			const run = await cli(dir, 'go', '/b');
+			assert.equal(run.code, 6, run.stderr);
+			assert.match(run.stderr, /Let the agent look.*do not retry/);
+			assert.equal(await route(), '/a');
+		} finally {
+			await send({ type: 'look:allow', allowed: true });
+			await new Promise((r) => setTimeout(r, 300));
+		}
+	});
+
+	test('go reload loads the document again and reports the new one', async () => {
+		const run = await cli(dir, 'go', 'reload', '--json');
+		assert.equal(run.code, 0, run.stderr);
+		assert.equal(JSON.parse(run.stdout).page.route, '/a');
+		assert.equal(await kept(), undefined, 'a fresh document');
+		const home = await cli(dir, 'go', '/');
+		assert.equal(home.code, 0, home.stderr);
+		await app.waitForFunction(
+			() =>
+				!!(document.querySelector('button.retry') as { __svelte_meta?: unknown } | null)
+					?.__svelte_meta,
+		);
 	});
 });
 

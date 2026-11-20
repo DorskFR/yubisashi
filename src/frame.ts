@@ -22,8 +22,23 @@ export function relaxCsp(value: string, origins: string[]): string {
 	return [...kept, `frame-ancestors ${origins.join(' ')}`].join('; ');
 }
 
+const pageNonce = (html: string) => html.match(/<script[^>]*\snonce="([^"]+)"/i)?.[1];
+
+/** A classic, blocking script at the very start of `<head>`, so it runs before any module. */
+export function injectFirstScript(html: string, src: string): string {
+	const nonce = pageNonce(html);
+	const tag = `<script${nonce ? ` nonce="${nonce}"` : ''} src="${src}"></script>`;
+	const head = html.match(/<head(\s[^>]*)?>/i);
+	if (head?.index !== undefined) {
+		const at = head.index + head[0].length;
+		return html.slice(0, at) + tag + html.slice(at);
+	}
+	const script = html.search(/<script\b/i);
+	return script < 0 ? html : html.slice(0, script) + tag + html.slice(script);
+}
+
 export function injectScript(html: string, src: string): string {
-	const nonce = html.match(/<script[^>]*\snonce="([^"]+)"/i)?.[1];
+	const nonce = pageNonce(html);
 	const tag = `<script type="module"${nonce ? ` nonce="${nonce}"` : ''} src="${src}"></script>`;
 	if (/<\/head>/i.test(html)) return html.replace(/<\/head>/i, `${tag}</head>`);
 	if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${tag}</body>`);

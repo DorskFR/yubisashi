@@ -2,9 +2,17 @@ import { selectorOf } from './inspect.ts';
 
 export type LookArgs = Record<string, unknown>;
 export type LookHandler = (args: LookArgs, ctx: LookContext) => unknown | Promise<unknown>;
-export type LookContext = { doc: Document; win: Window; root: HTMLElement };
+export type LookContext = {
+	doc: Document;
+	win: Window;
+	root: HTMLElement;
+	/** This document's subscriber id; a new page load gets a new one. */
+	instance?: string;
+	/** Runs `fn` once the result has been posted (to navigate away after answering). */
+	after?: (fn: () => void) => void;
+};
 
-export type LookClientOptions = LookContext & {
+export type LookClientOptions = Omit<LookContext, 'instance' | 'after'> & {
 	allowed?: boolean;
 	handlers: Record<string, LookHandler>;
 	onServed?: (kind: string, selector?: string) => void;
@@ -25,6 +33,7 @@ const RESULT = '/__yubi/look/result/';
 const STATE = '/__yubi/look/state/';
 const ACTIVE_EVERY_MS = 2000;
 const RECONNECT_MAX_MS = 30_000;
+const SEEN_MAX = 200;
 
 const randomId = () => {
 	const bytes = new Uint8Array(16);
@@ -45,6 +54,7 @@ export function createLookClient(options: LookClientOptions): LookClient {
 	let backoff = 1000;
 	let lastActive = 0;
 	let destroyed = false;
+	const seen = new Set<string>();
 
 	const post = (path: string, body: unknown, keepalive = false) =>
 		win
@@ -73,6 +83,10 @@ export function createLookClient(options: LookClientOptions): LookClient {
 			return;
 		}
 		if (typeof request.id !== 'string' || typeof request.kind !== 'string') return;
+		if (seen.has(request.id)) return;
+		seen.add(request.id);
+		if (seen.size > SEEN_MAX) seen.delete(seen.values().next().value as string);
+		const afters: (() => void)[] = [];
 		const args =
 			typeof request.args === 'object' && request.args !== null ? (request.args as LookArgs) : {};
 		let result: { ok: true; data: unknown } | { ok: false; error: string };
@@ -82,7 +96,9 @@ export function createLookClient(options: LookClientOptions): LookClient {
 			if (!handler) result = { ok: false, error: `unknown look kind "${request.kind}"` };
 			else {
 				try {
-					result = { ok: true, data: await handler(args, { doc, win, root }) };
+					const after = (fn: () => void) => void afters.push(fn);
+					const ctx: LookContext = { doc, win, root, instance: id, after };
+					result = { ok: true, data: await handler(args, ctx) };
 					const selector = typeof args.selector === 'string' ? args.selector : undefined;
 					options.onServed?.(request.kind, selector);
 				} catch (err) {
@@ -90,7 +106,8 @@ export function createLookClient(options: LookClientOptions): LookClient {
 				}
 			}
 		}
-		await post(`${RESULT}${request.id}`, result);
+		await post(`${RESULT}${request.id}`, result, request.kind === 'go');
+		for (const fn of afters) fn();
 	}
 
 	function connect() {
@@ -120,8 +137,19 @@ export function createLookClient(options: LookClientOptions): LookClient {
 	const onVisible = () => {
 		if (doc.visibilityState === 'visible') active();
 	};
+	const onHide = () => void post(`${STATE}${id}`, { leaving: true }, true);
+	const onShow = (e: PageTransitionEvent) => {
+		if (!e.persisted) return;
+		source?.close();
+		source = null;
+		connect();
+		lastActive = 0;
+		active();
+	};
 	win.addEventListener('focus', active);
 	win.addEventListener('pointerdown', active, true);
+	win.addEventListener('pagehide', onHide);
+	win.addEventListener('pageshow', onShow);
 	doc.addEventListener('visibilitychange', onVisible);
 	connect();
 
@@ -140,6 +168,8 @@ export function createLookClient(options: LookClientOptions): LookClient {
 			source = null;
 			win.removeEventListener('focus', active);
 			win.removeEventListener('pointerdown', active, true);
+			win.removeEventListener('pagehide', onHide);
+			win.removeEventListener('pageshow', onShow);
 			doc.removeEventListener('visibilitychange', onVisible);
 		},
 	};
@@ -147,6 +177,7 @@ export function createLookClient(options: LookClientOptions): LookClient {
 
 export type PageInfo = {
 	route: string;
+	instance?: string;
 	title: string;
 	url: string;
 	viewport: { width: number; height: number };
@@ -156,7 +187,7 @@ export type PageInfo = {
 	readyState: DocumentReadyState;
 };
 
-export const lookPage: LookHandler = (_args, { doc, win, root }): PageInfo => {
+export const lookPage: LookHandler = (_args, { doc, win, root, instance }): PageInfo => {
 	const focused = doc.activeElement;
 	const focus =
 		focused && focused !== doc.body && focused !== doc.documentElement && !root.contains(focused)
@@ -164,6 +195,7 @@ export const lookPage: LookHandler = (_args, { doc, win, root }): PageInfo => {
 			: null;
 	return {
 		route: win.location.pathname + win.location.search + win.location.hash,
+		instance,
 		title: doc.title,
 		url: win.location.href,
 		viewport: { width: win.innerWidth, height: win.innerHeight },

@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
+import { runGo, runShow } from './agent-cli.ts';
 import { resolveCctui, startDev } from './dev.ts';
 import { parentOrigins } from './frame.ts';
 import { runLook } from './look-cli.ts';
 
 const USAGE = `Usage: yubi dev [options] [-- <dev command>]
        yubi look <what> [selector] [options]     (yubi look --help)
+       yubi go <path|back|forward|reload>        (yubi go --help)
+       yubi show <selector> | --clear            (yubi show --help)
 
 Runs <dev command> (e.g. "npm run dev") and serves it through a proxy that the yubisashi pane
 at --parent-origin may frame; the picker is injected into every page.
@@ -44,13 +47,14 @@ function fail(message: string): never {
 }
 
 async function main(argv: string[]) {
-	if (argv[0] === 'look') {
-		const code = await runLook(argv.slice(1), {
+	const agents: Record<string, typeof runLook> = { look: runLook, go: runGo, show: runShow };
+	const agent = argv[0] && Object.hasOwn(agents, argv[0]) ? agents[argv[0]] : undefined;
+	if (agent) {
+		process.exitCode = await agent(argv.slice(1), {
 			cwd: process.cwd(),
 			stdout: (t) => process.stdout.write(t),
 			stderr: (t) => process.stderr.write(t),
 		});
-		process.exitCode = code;
 		return;
 	}
 	const dash = argv.indexOf('--');
@@ -147,7 +151,8 @@ async function main(argv: string[]) {
 	for (const url of handle.urls) process.stdout.write(`yubisashi: ${url}\n`);
 	log(`yubisashi: framing allowed from ${origins.join(', ')}`);
 	if (cctui) log(`yubisashi: published as a cctui preview of session ${cctui.sessionId}`);
-	if (!values['no-look']) log('yubisashi: `yubi look` can reach this proxy from this directory');
+	if (!values['no-look'])
+		log('yubisashi: `yubi look`, `go` and `show` can reach this proxy from this directory');
 	if (https && !tls)
 		log(
 			'yubisashi: the certificate is self-signed; open one of the URLs above in a browser tab and accept it once, then the yubisashi pane can frame it',

@@ -31,7 +31,11 @@ Outside cctui, pass `--parent-origin https://cctui.example.com`. It then serves 
   `Local:` line), or takes `--target URL` (default `http://localhost:5173`); leave out
   `-- <command>` when the server is already running;
 - proxies HTTP and WebSocket upgrades (HMR keeps working), rewriting `Host`/`Origin`/`Referer`
-  toward the dev server and `Location` redirects to the app origin into relative ones;
+  toward the dev server and `Location` redirects to the app origin into relative ones; an
+  upstream that breaks mid-response ends the request with a 502 instead of leaving it open;
+- loads a small watcher, `/__yubi/hmr.js`, ahead of the dev server's client in every framed
+  page. When Vite's hot-reload socket drops and does not come back, the pane shows "Hot reload
+  lost" with a "Reload page" button instead of silently keeping stale styles;
 - injects `<script type="module" src="/__yubi/picker.js">` into every HTML response (asking the
   dev server for identity encoding, decompressing when it insists), drops `X-Frame-Options` and
   rewrites CSP `frame-ancestors` to the `--parent-origin` list (repeatable, or
@@ -95,11 +99,47 @@ Every command takes `--json` (raw JSON) and `--timeout S` (default 15 s, 60 s fo
   (or `--out FILE`), `--scale N` sets the pixel ratio, and a warning line lists what a raster
   cannot show: cross-origin images without CORS, `<video>`, some filters and
   `backdrop-filter`, canvases tainted by cross-origin content. `--raster` is accepted; the DOM
-  raster is the only capture path.
+  raster is the only capture path. A viewport shot keeps the boxes of elements wholly below or
+  right of the viewport but skips what is inside them, so long pages stay cheap. It has a time
+  budget (the request timeout minus 3 s) and a size budget (9 MB of PNG data); going over
+  either fails with that reason.
 
 Errors are explicit: "no `yubi dev` running here", "no browser has the app open" (nothing is
 subscribed: a plain tab on the preview URL never serves looks), "the user has turned looking
-off", "the browser did not answer". Each exits non-zero with its own code.
+off", "the browser did not answer", "the tab answering this request went away". Each exits
+non-zero with its own code.
+
+The event stream to the tab survives being cut: tunnels in between end long requests (the cctui
+preview does every minute), so a dropped stream keeps its tab and pending requests for 5 s; on
+reconnect the pending requests are sent again (the picker ignores ids it has seen). A tab that
+unloads says so and stops receiving requests at once.
+
+## Navigating and pointing: `yubi go`, `yubi show`
+
+```sh
+yubi go /settings?tab=2              # same-origin path; prints the look page summary
+yubi go /sessions --scroll '#row-20' # then scroll an element into view
+yubi go back | forward | reload
+yubi show '.badge' --label 'too dark' [--all] [--ttl S]
+yubi show --clear
+```
+
+- `go` drives the app's client router when there is one: it clicks a hidden link to the path,
+  which SvelteKit (and other link-intercepting routers) take without reloading; routers that
+  keep their own `history.state` get a `pushState` + `popstate`; anything else gets
+  `location.assign`, and the CLI waits for the new document to connect. It then waits for the
+  DOM to be quiet for 300 ms (5 s cap). Cross-origin URLs are refused, and so is any navigation
+  while the user has unsaved text in a focused field ("user is busy"). `back`/`forward` use the
+  Navigation API, so they never move the page that frames the app. The pane lists "Agent
+  navigated: /from → /to" and its address field follows.
+- `show` outlines the first match (every match with `--all`, up to 50) in the picker's style
+  with a numbered tag and the label, scrolls it into view, follows it on scroll and resize,
+  and removes it after `--ttl` (default 10 s, `0` keeps it), on `--clear`, or when the user
+  clicks it. Calls stack, numbered 1, 2, 3… until all are gone. It prints each number with its
+  selector and source `file:line`; 0 matches is an error. The overlay takes no pointer events
+  except its tag (click to dismiss). The pane lists "Agent showed: <label>"; clicking the entry
+  scrolls back to it.
+- Both go through the look channel and the same "Let the agent look" switch.
 
 ### Security model
 
@@ -189,6 +229,7 @@ Parent → app:
 | `pick:clear` | `id?: number` (pin the selection to comment #id) |
 | `pins:set`   | `pins: { id, selector }[]` |
 | `look:allow` | `allowed: boolean` (the consent switch) |
+| `show:focus` | `id: number` (scroll back to highlight #id) |
 
 App → parent:
 
@@ -201,6 +242,9 @@ App → parent:
 | `pick:cancel`   |                                                 |
 | `pin:open`      | `id: number`                                    |
 | `look:served`   | `kind: string`, `selector?: string`             |
+| `agent:navigated` | `from: string`, `to: string`                  |
+| `agent:showed`  | `id: number`, `label: string`                   |
+| `hmr`           | `status: 'connected' \| 'lost'`                 |
 
 `Target`: `tag`, `selector`, `text`, `html`, `attrs`, `rect`, `source?: { file, line, column }`,
 `stack: Frame[]` (the components that rendered it). Types and the `isParentMessage` /
@@ -213,7 +257,7 @@ Proxy ⇄ picker (HTTP, only under `yubi dev`):
 | `POST /__yubi/look`             | CLI    | `{ kind, args, timeout? }` with the bearer token; held until a result; 503 no browser, 504 timeout, 403 looking off |
 | `GET /__yubi/look/events?sub=…` | picker | SSE stream of `{ id, kind, args }`                                                               |
 | `POST /__yubi/look/result/:id`  | picker | `{ ok: true, data }` or `{ ok: false, error }`, accepted once                                    |
-| `POST /__yubi/look/state/:sub`  | picker | `{ allowed }`; also marks that tab as the active one                                             |
+| `POST /__yubi/look/state/:sub`  | picker | `{ allowed }`; also marks that tab as the active one. `{ leaving: true }` on page hide           |
 | `GET /__yubi/raster.js`         | picker | the DOM-to-canvas renderer, fetched on the first `shot`                                          |
 
 ## cctui plugin

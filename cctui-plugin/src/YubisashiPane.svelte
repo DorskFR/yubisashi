@@ -137,6 +137,35 @@
 			<Text size="sm" tone="accent">{ctl.lookNotice}</Text>
 		</div>
 	{/if}
+	{#if ctl.hmr === 'lost'}
+		<div class="notice hmr" role="alert" data-journey="hmr-lost">
+			<Text size="sm" tone="danger">{m.hmrLost}</Text>
+			<Button size="sm" data-journey="hmr-reload" onclick={() => ctl.reloadFrame()}>
+				{m.hmrReload}
+			</Button>
+		</div>
+	{/if}
+	{#if ctl.activity.length}
+		<ul class="activity" aria-label={m.activityLabel} data-journey="activity">
+			{#each ctl.activity.slice(0, 5) as entry (entry.key)}
+				<li>
+					{#if entry.kind === 'showed'}
+						<Button
+							size="sm"
+							variant="link"
+							title={m.agentShowedAgain}
+							data-journey="activity-show"
+							onclick={() => ctl.focusShow(entry.id)}
+						>
+							{entry.text}
+						</Button>
+					{:else}
+						<Text size="sm" tone="faint">{entry.text}</Text>
+					{/if}
+				</li>
+			{/each}
+		</ul>
+	{/if}
 	<div class="status" data-journey="status" data-status={ctl.status}>
 		{#if ctl.selected}
 			<Text size="sm" tone="faint">{ctl.lookAllowed ? statusText : m.lookOff}</Text>
@@ -200,6 +229,28 @@
 	.notice {
 		padding: var(--sp-1) var(--sp-2);
 		border-top: 1px solid var(--border);
+	}
+	.hmr {
+		display: flex;
+		align-items: center;
+		gap: var(--sp-2);
+		flex-wrap: wrap;
+	}
+	.activity {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		margin: 0;
+		padding: var(--sp-1) var(--sp-2);
+		list-style: none;
+		border-top: 1px solid var(--border);
+		min-width: 0;
+	}
+	.activity li {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.consent {
 		margin-left: auto;

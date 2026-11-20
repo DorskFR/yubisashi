@@ -94,6 +94,27 @@ describe('parseChildMessage', () => {
 		expect(parseChildMessage({ yubi: YUBI, type: 'route', route: '/a' })?.type).toBe('route');
 		expect(parseChildMessage({ yubi: YUBI, type: 'route' })).toBeNull();
 	});
+
+	it('parses agent navigation, highlights and the hot-reload state strictly', () => {
+		expect(
+			parseChildMessage({ yubi: YUBI, type: 'agent:navigated', from: '/a', to: '/b' }),
+		).toEqual({ yubi: YUBI, type: 'agent:navigated', from: '/a', to: '/b' });
+		expect(parseChildMessage({ yubi: YUBI, type: 'agent:navigated', from: '/a' })).toBeNull();
+		const label = 'l'.repeat(500);
+		expect(parseChildMessage({ yubi: YUBI, type: 'agent:showed', id: 1, label })).toEqual({
+			yubi: YUBI,
+			type: 'agent:showed',
+			id: 1,
+			label: 'l'.repeat(120),
+		});
+		expect(parseChildMessage({ yubi: YUBI, type: 'agent:showed', id: '1', label })).toBeNull();
+		expect(parseChildMessage({ yubi: YUBI, type: 'hmr', status: 'lost' })).toEqual({
+			yubi: YUBI,
+			type: 'hmr',
+			status: 'lost',
+		});
+		expect(parseChildMessage({ yubi: YUBI, type: 'hmr', status: 'gone' })).toBeNull();
+	});
 });
 
 describe('origin gate', () => {
