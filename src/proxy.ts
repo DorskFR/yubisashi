@@ -191,9 +191,9 @@ export function createProxy({ target, origins, lookToken, lookTimeout }: ProxyOp
 			(up) => {
 				const headers = responseHeaders(up.headers, target, self, origins);
 				const status = up.statusCode ?? 502;
-				up.on('aborted', () => res.destroy());
 				if (!(headers['content-type'] ?? '').includes('text/html')) {
 					res.writeHead(status, headers);
+					up.on('aborted', () => res.destroy());
 					up.on('error', () => res.destroy());
 					up.pipe(res);
 					return;

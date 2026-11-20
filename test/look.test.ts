@@ -488,6 +488,12 @@ const route = () => app.evaluate(() => location.pathname);
 const kept = () => app.evaluate(() => (window as { __kept?: number }).__kept);
 
 describe('yubi go', () => {
+	before(async () => {
+		await app.locator('#note').fill('');
+		await app.locator('#note').blur();
+		await app.evaluate(() => window.scrollTo(0, 0));
+	});
+
 	test('go /b from /a changes the route without a full reload and prints the new route', async () => {
 		const toA = await cli(dir, 'go', '/a');
 		assert.equal(toA.code, 0, toA.stderr);
@@ -531,25 +537,34 @@ describe('yubi go', () => {
 	});
 
 	test('refuses while the user is typing unsaved text', async () => {
-		assert.equal((await cli(dir, 'go', '/a')).code, 0);
+		const toA = await cli(dir, 'go', '/a');
+		assert.equal(toA.code, 0, toA.stderr);
 		await app.locator('#draft').fill('half a sentence');
-		const run = await cli(dir, 'go', '/b');
-		assert.notEqual(run.code, 0);
-		assert.match(run.stderr, /user is busy: typing in #draft/);
-		assert.equal(await route(), '/a');
-		await app.locator('#draft').fill('');
-		await app.locator('#draft').blur();
+		try {
+			const run = await cli(dir, 'go', '/b');
+			assert.notEqual(run.code, 0);
+			assert.match(run.stderr, /user is busy: typing in #draft/);
+			assert.equal(await route(), '/a');
+		} finally {
+			await app.locator('#draft').fill('');
+			await app.locator('#draft').blur();
+		}
 	});
 
 	test('with the switch off, go errors and the route does not change', async () => {
+		const toA = await cli(dir, 'go', '/a');
+		assert.equal(toA.code, 0, toA.stderr);
 		await send({ type: 'look:allow', allowed: false });
 		await new Promise((r) => setTimeout(r, 300));
-		const run = await cli(dir, 'go', '/b');
-		assert.equal(run.code, 6, run.stderr);
-		assert.match(run.stderr, /Let the agent look.*do not retry/);
-		assert.equal(await route(), '/a');
-		await send({ type: 'look:allow', allowed: true });
-		await new Promise((r) => setTimeout(r, 300));
+		try {
+			const run = await cli(dir, 'go', '/b');
+			assert.equal(run.code, 6, run.stderr);
+			assert.match(run.stderr, /Let the agent look.*do not retry/);
+			assert.equal(await route(), '/a');
+		} finally {
+			await send({ type: 'look:allow', allowed: true });
+			await new Promise((r) => setTimeout(r, 300));
+		}
 	});
 
 	test('go reload loads the document again and reports the new one', async () => {

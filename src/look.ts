@@ -110,8 +110,12 @@ export function createLookChannel(options: LookChannelOptions): LookChannel {
 		let best: Subscriber | undefined;
 		for (const s of subscribers.values()) {
 			if (s.leaving) continue;
-			if (!best || s.active > best.active || (s.active === best.active && s.seq > best.seq))
-				best = s;
+			const better =
+				!best ||
+				(s.res !== null && best.res === null) ||
+				((s.res !== null) === (best.res !== null) &&
+					(s.active > best.active || (s.active === best.active && s.seq > best.seq)));
+			if (better) best = s;
 		}
 		return best;
 	};
