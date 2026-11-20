@@ -110,7 +110,9 @@ function pushThrough(win: Window, url: URL): boolean {
 	return true;
 }
 
-function scrollToMatch(doc: Document, root: Element, selector: string) {
+type Scrolled = { scrolled: string } | { scrollError: string };
+
+function scrollToMatch(doc: Document, root: Element, selector: string): Scrolled {
 	let el: Element | undefined;
 	try {
 		el = [...doc.querySelectorAll(selector)].find((e) => !root.contains(e));

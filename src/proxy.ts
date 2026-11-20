@@ -7,8 +7,8 @@ import { connect as tlsConnect } from 'node:tls';
 import { fileURLToPath } from 'node:url';
 import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
 import { bootstrap, CSP_HEADERS, injectFirstScript, injectScript, relaxCsp } from './frame.ts';
-import { HMR_WATCH_JS, HMR_WATCH_PATH } from './picker/hmr-watch.ts';
 import { createLookChannel, type LookChannel } from './look.ts';
+import { HMR_WATCH_JS, HMR_WATCH_PATH } from './picker/hmr-watch.ts';
 
 export const PICKER_PATH = '/__yubi/picker.js';
 export const RASTER_PATH = '/__yubi/raster.js';
@@ -213,9 +213,7 @@ export function createProxy({ target, origins, lookToken, lookTimeout }: ProxyOp
 						res.writeHead(status, headers);
 						res.end(html);
 					})
-					.catch((err: Error) =>
-						fail(res, `${target.origin} sent a broken page (${err.message})`),
-					);
+					.catch((err: Error) => fail(res, `${target.origin} sent a broken page (${err.message})`));
 			},
 		);
 		upstream.on('error', (err) => {

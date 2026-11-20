@@ -455,7 +455,10 @@ describe('yubi show', () => {
 		assert.match(second.stdout, /^showing 1 of 1 match for 10s$/m);
 		const third = await cli(dir, 'show', 'p.line[data-i="3"]', '--json');
 		assert.equal(JSON.parse(third.stdout).shown[0].n, 3);
-		assert.deepEqual((await highlights()).map((h) => h.id), ['1', '2', '3']);
+		assert.deepEqual(
+			(await highlights()).map((h) => h.id),
+			['1', '2', '3'],
+		);
 		const cleared = await cli(dir, 'show', '--clear');
 		assert.equal(cleared.code, 0, cleared.stderr);
 		assert.equal(cleared.stdout.trim(), 'cleared 3 highlights');
