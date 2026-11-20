@@ -141,6 +141,25 @@ describe('look channel liveness', () => {
 		await tick(1700);
 	});
 
+	test('a request left unanswered by a tab that reloads is answered by the next tab', async () => {
+		const old = subscribe('tab-reloading');
+		await old.ready;
+		const reply = ask('go', { to: '/b' });
+		await old.next(1);
+		assert.equal((await state('tab-reloading', { leaving: true })).status, 204);
+		old.cut();
+		await tick(1300);
+		const fresh = subscribe('tab-reloaded');
+		await fresh.ready;
+		const event = await fresh.next(1);
+		assert.equal(event.kind, 'go');
+		await answer(event.id, { route: '/b' });
+		const { status, body } = await reply;
+		assert.equal(status, 200, JSON.stringify(body));
+		fresh.cut();
+		await tick(1700);
+	});
+
 	test('a tab that does not come back within the grace period is gone', async () => {
 		const tab = subscribe('tab-c');
 		await tab.ready;
