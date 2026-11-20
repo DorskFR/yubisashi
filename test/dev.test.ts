@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer as createHttpServer, type Server } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import type { AddressInfo } from 'node:net';
@@ -69,6 +69,11 @@ function upstreamServer() {
 					.end();
 			case '/redir':
 				return res.writeHead(302, { location: `http://${req.headers.host}/after` }).end();
+			case '/broken':
+				res.writeHead(200, { 'content-type': 'text/html' });
+				res.write('<html><head>');
+				setTimeout(() => res.socket?.destroy(), 50);
+				return;
 			default:
 				return res.writeHead(404).end();
 		}
@@ -139,6 +144,23 @@ describe('http proxy', () => {
 		const html = await res.text();
 		assert.match(html, /<h1>up<\/h1>/);
 		assert.equal(html.match(/__yubi\/picker\.js/g)?.length, 1);
+	});
+
+	test('loads the hot-reload watcher first in head, before any module', async () => {
+		const html = await (await fetch(`${origin}/`, { headers: { accept: 'text/html' } })).text();
+		assert.match(html, /<head><script src="\/__yubi\/hmr\.js"><\/script><title>/);
+		const watch = await fetch(`${origin}/__yubi/hmr.js`);
+		assert.equal(watch.status, 200);
+		assert.match(watch.headers.get('content-type') ?? '', /javascript/);
+		const source = await watch.text();
+		assert.match(source, /vite-hmr/);
+		assert.match(source, /window\.parent === window/);
+	});
+
+	test('a page that breaks mid-body ends with a 502 instead of hanging', async () => {
+		const res = await fetch(`${origin}/broken`, { signal: AbortSignal.timeout(5000) });
+		assert.equal(res.status, 502);
+		assert.match(await res.text(), /sent a broken page/);
 	});
 
 	test('passes non-HTML through untouched', async () => {
@@ -457,18 +479,7 @@ describe('cctui preview', () => {
 	});
 });
 
-describe('browser', () => {
-	let harness: Server;
-	let harnessOrigin: string;
-	let vite: Awaited<ReturnType<typeof createVite>>;
-	let dev: DevHandle;
-	let browser: Browser;
-
-	before(async () => {
-		harness = createHttpServer((_req, res) =>
-			res
-				.writeHead(200, { 'content-type': 'text/html' })
-				.end(`<!doctype html><html><body style="margin:0">
+const HARNESS = `<!doctype html><html><body style="margin:0">
 	<script>
 		window.messages = [];
 		addEventListener('message', (e) => {
@@ -482,8 +493,110 @@ describe('browser', () => {
 			document.body.append(f);
 		};
 		window.send = (m) => document.getElementById('app').contentWindow.postMessage({ yubi: 1, ...m }, '*');
-	</script></body></html>`),
+	</script></body></html>`;
+
+const harnessServer = () =>
+	createHttpServer((_req, res) => res.writeHead(200, { 'content-type': 'text/html' }).end(HARNESS));
+
+describe('hot reload through the proxy', () => {
+	const root = mkdtempSync(join(tmpdir(), 'yubi-hmr-'));
+	const css = join(root, 'style.css');
+	let harness: Server;
+	let harnessOrigin: string;
+	let vite: Awaited<ReturnType<typeof createVite>>;
+	let dev: DevHandle;
+	let browser: Browser;
+
+	before(async () => {
+		writeFileSync(
+			join(root, 'index.html'),
+			'<!doctype html><html><head><title>hmr</title></head><body><h1>hot</h1><script type="module" src="/main.js"></script></body></html>',
 		);
+		writeFileSync(join(root, 'main.js'), "import './style.css';\n");
+		writeFileSync(css, 'h1 { color: rgb(1, 2, 3); }\n');
+		harness = harnessServer();
+		harnessOrigin = await listen(harness);
+		vite = await createVite({
+			root,
+			configFile: false,
+			logLevel: 'silent',
+			server: { host: '127.0.0.1', port: 0 },
+		});
+		await vite.listen();
+		const address = vite.httpServer?.address() as AddressInfo;
+		dev = await proxied(`http://127.0.0.1:${address.port}`, { origins: [harnessOrigin] });
+		browser = await chromium.launch();
+	});
+
+	after(async () => {
+		await browser?.close();
+		await dev?.close();
+		await vite?.close();
+		await new Promise((r) => harness.close(r));
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	test('a CSS edit after a failed compile still reaches the framed page, and a dropped socket is reported', async () => {
+		const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+		page.setDefaultTimeout(15000);
+		await page.goto(`${harnessOrigin}/`);
+		await page.evaluate(
+			(src) => (window as unknown as { frameApp: (s: string) => void }).frameApp(src),
+			`http://127.0.0.1:${dev.port}/`,
+		);
+		await page.frameLocator('#app').locator('[data-yubi="root"]').waitFor();
+		const app = page.frames().find((f) => f !== page.mainFrame());
+		assert.ok(app);
+		const hmr = () =>
+			page.evaluate(() =>
+				((window as { messages?: { type: string; status?: string }[] }).messages ?? [])
+					.filter((m) => m.type === 'hmr')
+					.map((m) => m.status),
+			);
+		const color = (want: string) =>
+			app.waitForFunction(
+				(c) => getComputedStyle(document.querySelector('h1') as Element).color === c,
+				want,
+			);
+		await color('rgb(1, 2, 3)');
+		await page.waitForFunction(() =>
+			(window as { messages?: { type: string; status?: string }[] }).messages?.some(
+				(m) => m.type === 'hmr' && m.status === 'connected',
+			),
+		);
+		await app.evaluate(() => {
+			(window as { __kept?: number }).__kept = 1;
+		});
+
+		writeFileSync(css, 'h1 { color: rgb(10, 20, 30); }\n');
+		await color('rgb(10, 20, 30)');
+		writeFileSync(css, 'h1 { color: rgb(40, 50, 60);\n');
+		await new Promise((r) => setTimeout(r, 1500));
+		writeFileSync(css, 'h1 { color: rgb(70, 80, 90); }\n');
+		await color('rgb(70, 80, 90)');
+		assert.equal(await app.evaluate(() => (window as { __kept?: number }).__kept), 1);
+		assert.deepEqual(await hmr(), ['connected']);
+
+		await vite.ws.close();
+		await page.waitForFunction(() =>
+			(window as { messages?: { type: string; status?: string }[] }).messages?.some(
+				(m) => m.type === 'hmr' && m.status === 'lost',
+			),
+		);
+		assert.deepEqual((await hmr()).slice(0, 2), ['connected', 'lost']);
+		await page.close();
+	});
+});
+
+describe('browser', () => {
+	let harness: Server;
+	let harnessOrigin: string;
+	let vite: Awaited<ReturnType<typeof createVite>>;
+	let dev: DevHandle;
+	let browser: Browser;
+
+	before(async () => {
+		harness = harnessServer();
 		harnessOrigin = await listen(harness);
 		vite = await createVite({
 			root: VITE_ROOT,

@@ -6,7 +6,8 @@ import type { Duplex } from 'node:stream';
 import { connect as tlsConnect } from 'node:tls';
 import { fileURLToPath } from 'node:url';
 import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
-import { bootstrap, CSP_HEADERS, injectScript, relaxCsp } from './frame.ts';
+import { bootstrap, CSP_HEADERS, injectFirstScript, injectScript, relaxCsp } from './frame.ts';
+import { HMR_WATCH_JS, HMR_WATCH_PATH } from './picker/hmr-watch.ts';
 import { createLookChannel, type LookChannel } from './look.ts';
 
 export const PICKER_PATH = '/__yubi/picker.js';
@@ -145,6 +146,12 @@ async function serveRaster(res: ServerResponse) {
 	}
 }
 
+function fail(res: ServerResponse, message: string) {
+	if (res.headersSent) return void res.destroy();
+	res.writeHead(502, { 'content-type': 'text/plain' });
+	res.end(`yubisashi: ${message}`);
+}
+
 export function createProxy({ target, origins, lookToken, lookTimeout }: ProxyOptions): Proxy {
 	const send = target.protocol === 'https:' ? httpsRequest : request;
 	const port = Number(target.port || (target.protocol === 'https:' ? 443 : 80));
@@ -159,6 +166,14 @@ export function createProxy({ target, origins, lookToken, lookTimeout }: ProxyOp
 		}
 		if (look && pathname === RASTER_PATH) {
 			void serveRaster(res);
+			return;
+		}
+		if (pathname === HMR_WATCH_PATH) {
+			res.writeHead(200, {
+				'content-type': 'text/javascript; charset=utf-8',
+				'cache-control': 'no-store',
+			});
+			res.end(HMR_WATCH_JS);
 			return;
 		}
 		if (look?.handle(req, res)) return;
@@ -176,29 +191,38 @@ export function createProxy({ target, origins, lookToken, lookTimeout }: ProxyOp
 			(up) => {
 				const headers = responseHeaders(up.headers, target, self, origins);
 				const status = up.statusCode ?? 502;
+				up.on('aborted', () => res.destroy());
 				if (!(headers['content-type'] ?? '').includes('text/html')) {
 					res.writeHead(status, headers);
+					up.on('error', () => res.destroy());
 					up.pipe(res);
 					return;
 				}
-				void readAll(up).then((raw) => {
-					const body = decode(raw, (headers['content-encoding'] ?? '').toLowerCase());
-					if (body === null) {
+				readAll(up)
+					.then((raw) => {
+						const body = decode(raw, (headers['content-encoding'] ?? '').toLowerCase());
+						if (body === null) {
+							res.writeHead(status, headers);
+							return res.end(raw);
+						}
+						const page = injectFirstScript(body.toString('utf8'), HMR_WATCH_PATH);
+						const html = injectScript(page, PICKER_PATH);
+						delete headers['content-encoding'];
+						delete headers['transfer-encoding'];
+						headers['content-length'] = String(Buffer.byteLength(html));
 						res.writeHead(status, headers);
-						return res.end(raw);
-					}
-					const html = injectScript(body.toString('utf8'), PICKER_PATH);
-					delete headers['content-encoding'];
-					delete headers['transfer-encoding'];
-					headers['content-length'] = String(Buffer.byteLength(html));
-					res.writeHead(status, headers);
-					res.end(html);
-				});
+						res.end(html);
+					})
+					.catch((err: Error) =>
+						fail(res, `${target.origin} sent a broken page (${err.message})`),
+					);
 			},
 		);
 		upstream.on('error', (err) => {
-			if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain' });
-			res.end(`yubisashi: ${target.origin} is not reachable (${err.message})`);
+			fail(res, `${target.origin} is not reachable (${err.message})`);
+		});
+		res.on('close', () => {
+			if (!res.writableFinished) upstream.destroy();
 		});
 		req.pipe(upstream);
 	};

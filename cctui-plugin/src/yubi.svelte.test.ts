@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PREVIEWS_DISABLED, type Preview } from './previews.ts';
 import {
+	ACTIVITY_MAX,
 	LOOK_ALLOWED_KEY,
 	LOOK_NOTICE_MS,
 	readLookAllowed,
@@ -139,15 +140,66 @@ describe('relativePath', () => {
 describe('YubiController.navigate', () => {
 	it('moves the frame to the path on the preview origin and drops picking', async () => {
 		const { ctl, contentWindow } = await connected();
-		const assign = vi.fn();
-		(contentWindow as { location?: unknown }).location = { assign };
+		const hrefs: string[] = [];
+		(contentWindow as { location?: unknown }).location = {
+			set href(v: string) {
+				hrefs.push(v);
+			},
+		};
 		ctl.picking = true;
 		ctl.navigate('https://evil.example/sessions?tab=1');
-		expect(assign).toHaveBeenCalledWith('https://cctui-pv-abc123.example.com/sessions?tab=1');
+		expect(hrefs).toEqual(['https://cctui-pv-abc123.example.com/sessions?tab=1']);
 		expect(ctl.route).toBe('/sessions?tab=1');
 		expect(ctl.picking).toBe(false);
 		ctl.navigate('javascript:alert(1)');
-		expect(assign).toHaveBeenCalledTimes(1);
+		expect(hrefs).toHaveLength(1);
+	});
+});
+
+describe('agent activity and hot reload', () => {
+	it('lists agent navigations and highlights newest first, and moves the address field', async () => {
+		const { ctl, deliver } = await connected();
+		deliver({ yubi: 1, type: 'agent:navigated', from: '/a', to: '/b' });
+		expect(ctl.route).toBe('/b');
+		deliver({ yubi: 1, type: 'agent:showed', id: 2, label: 'the retry button' });
+		expect(ctl.activity.map((a) => a.text)).toEqual([
+			'Agent showed: the retry button',
+			'Agent navigated: /a → /b',
+		]);
+		expect(ctl.activity[0]).toMatchObject({ kind: 'showed', id: 2 });
+		for (let i = 0; i < ACTIVITY_MAX + 5; i++)
+			deliver({ yubi: 1, type: 'agent:navigated', from: '/', to: `/${i}` });
+		expect(ctl.activity).toHaveLength(ACTIVITY_MAX);
+	});
+
+	it('asks the picker to scroll back to a highlight', async () => {
+		const { ctl, contentWindow } = await connected();
+		ctl.focusShow(3);
+		expect(contentWindow.postMessage.mock.calls.at(-1)?.[0]).toEqual({
+			yubi: 1,
+			type: 'show:focus',
+			id: 3,
+		});
+	});
+
+	it('tracks the hot-reload socket and reloads the frame where it is', async () => {
+		const { ctl, contentWindow, deliver } = await connected();
+		const hrefs: string[] = [];
+		(contentWindow as { location?: unknown }).location = {
+			set href(v: string) {
+				hrefs.push(v);
+			},
+		};
+		deliver({ yubi: 1, type: 'route', route: '/sessions' });
+		deliver({ yubi: 1, type: 'hmr', status: 'connected' });
+		expect(ctl.hmr).toBe('connected');
+		deliver({ yubi: 1, type: 'hmr', status: 'lost' });
+		expect(ctl.hmr).toBe('lost');
+		deliver({ yubi: 1, type: 'hmr', status: 'weird' });
+		expect(ctl.hmr).toBe('lost');
+		ctl.reloadFrame();
+		expect(hrefs).toEqual(['https://cctui-pv-abc123.example.com/sessions']);
+		expect(ctl.hmr).toBeNull();
 	});
 });
 

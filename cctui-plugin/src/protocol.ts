@@ -113,6 +113,23 @@ export function parseChildMessage(data: unknown): ChildMessage | null {
 			if (isStr(data.selector)) served.selector = data.selector.slice(0, 200);
 			return served;
 		}
+		case 'agent:navigated':
+			return isStr(data.from) && isStr(data.to)
+				? {
+						yubi: YUBI,
+						type: 'agent:navigated',
+						from: data.from.slice(0, 300),
+						to: data.to.slice(0, 300),
+					}
+				: null;
+		case 'agent:showed':
+			return isNum(data.id) && isStr(data.label)
+				? { yubi: YUBI, type: 'agent:showed', id: data.id, label: data.label.slice(0, 120) }
+				: null;
+		case 'hmr':
+			return data.status === 'connected' || data.status === 'lost'
+				? { yubi: YUBI, type: 'hmr', status: data.status }
+				: null;
 		default:
 			return null;
 	}

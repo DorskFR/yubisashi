@@ -7,17 +7,20 @@ const RESULT_PREFIX = '/__yubi/look/result/';
 const STATE_PREFIX = '/__yubi/look/state/';
 
 export const DEFAULT_LOOK_TIMEOUT = 15_000;
+/** How long a dropped event stream may take to reconnect before its tab counts as gone. */
+export const DEFAULT_LOOK_GRACE = 5_000;
+const LEAVING_GRACE = 1_000;
 export const MAX_RESULT_BYTES = 10 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 64 * 1024;
 
-export type LookKind = 'page' | 'dom' | 'styles' | 'shot';
-export const LOOK_KINDS: readonly LookKind[] = ['page', 'dom', 'styles', 'shot'];
+export type LookKind = 'page' | 'dom' | 'styles' | 'shot' | 'go' | 'show';
+export const LOOK_KINDS: readonly LookKind[] = ['page', 'dom', 'styles', 'shot', 'go', 'show'];
 
 export type LookArgs = Record<string, unknown>;
 export type LookRequest = { id: string; kind: string; args: LookArgs };
 export type LookResult = { ok: true; data: unknown } | { ok: false; error: string };
 
-export type LookChannelOptions = { token: string; timeout?: number };
+export type LookChannelOptions = { token: string; timeout?: number; grace?: number };
 
 export type LookChannel = {
 	/** Serves the request when it is a look endpoint; returns false otherwise. */
@@ -29,14 +32,18 @@ export type LookChannel = {
 
 type Subscriber = {
 	id: string;
-	res: ServerResponse;
+	/** The open event stream; null while the browser reconnects. */
+	res: ServerResponse | null;
 	active: number;
 	allowed: boolean;
 	seq: number;
+	leaving: boolean;
+	grace: ReturnType<typeof setTimeout> | null;
 };
 
 type Pending = {
 	subscriber: Subscriber;
+	event: string;
 	resolve: (result: LookResult) => void;
 	timer: ReturnType<typeof setTimeout>;
 };
@@ -94,16 +101,18 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 /** Agent → browser request channel: the CLI posts a request, the most recently active
  *  framed picker receives it over SSE and posts the result back under the request's nonce. */
 export function createLookChannel(options: LookChannelOptions): LookChannel {
-	const { token, timeout = DEFAULT_LOOK_TIMEOUT } = options;
+	const { token, timeout = DEFAULT_LOOK_TIMEOUT, grace = DEFAULT_LOOK_GRACE } = options;
 	const subscribers = new Map<string, Subscriber>();
 	const pending = new Map<string, Pending>();
 	let order = 0;
 
 	const current = () => {
 		let best: Subscriber | undefined;
-		for (const s of subscribers.values())
+		for (const s of subscribers.values()) {
+			if (s.leaving) continue;
 			if (!best || s.active > best.active || (s.active === best.active && s.seq > best.seq))
 				best = s;
+		}
 		return best;
 	};
 
@@ -118,17 +127,50 @@ export function createLookChannel(options: LookChannelOptions): LookChannel {
 
 	const drop = (sub: Subscriber) => {
 		if (subscribers.get(sub.id) !== sub) return;
+		if (sub.grace) clearTimeout(sub.grace);
 		subscribers.delete(sub.id);
 		for (const [id, p] of pending)
 			if (p.subscriber === sub) settle(id, { ok: false, error: 'browser gone' });
+	};
+
+	/** Tunnels in between cut long-lived requests (the cctui preview does every minute), so a
+	 *  dropped stream keeps its tab and pending requests until the reconnect window passes. */
+	const detach = (sub: Subscriber, wait: number) => {
+		sub.res = null;
+		if (sub.grace) clearTimeout(sub.grace);
+		sub.grace = setTimeout(() => drop(sub), wait);
+	};
+
+	const attach = (id: string, res: ServerResponse, allowed: boolean): Subscriber => {
+		const known = subscribers.get(id);
+		if (!known) {
+			const sub: Subscriber = {
+				id,
+				res,
+				active: Date.now(),
+				allowed,
+				seq: ++order,
+				leaving: false,
+				grace: null,
+			};
+			subscribers.set(id, sub);
+			return sub;
+		}
+		const stale = known.res;
+		known.res = res;
+		known.allowed = allowed;
+		known.leaving = false;
+		if (known.grace) clearTimeout(known.grace);
+		known.grace = null;
+		stale?.end();
+		for (const p of pending.values()) if (p.subscriber === known) res.write(p.event);
+		return known;
 	};
 
 	function subscribe(req: IncomingMessage, res: ServerResponse) {
 		const query = new URL(req.url ?? '/', 'http://x').searchParams;
 		const id = query.get('sub') ?? nonce();
 		const allowed = query.get('allowed') !== '0';
-		const previous = subscribers.get(id);
-		if (previous) drop(previous);
 		res.writeHead(200, {
 			'content-type': 'text/event-stream',
 			'cache-control': 'no-store',
@@ -136,15 +178,14 @@ export function createLookChannel(options: LookChannelOptions): LookChannel {
 			'x-accel-buffering': 'no',
 		});
 		res.write(`retry: 1000\n\n`);
-		const sub: Subscriber = { id, res, active: Date.now(), allowed, seq: ++order };
-		subscribers.set(id, sub);
+		const sub = attach(id, res, allowed);
 		const ping = setInterval(() => res.write(': ping\n\n'), 20_000);
-		const gone = () => {
+		const closed = () => {
 			clearInterval(ping);
-			drop(sub);
+			if (sub.res === res) detach(sub, grace);
 		};
-		res.on('close', gone);
-		res.on('error', gone);
+		res.on('close', closed);
+		res.on('error', closed);
 	}
 
 	async function request(req: IncomingMessage, res: ServerResponse) {
@@ -167,9 +208,10 @@ export function createLookChannel(options: LookChannelOptions): LookChannel {
 			const timer = setTimeout(() => {
 				settle(id, { ok: false, error: `timed out after ${wait}ms` });
 			}, wait);
-			pending.set(id, { subscriber: sub, resolve, timer });
-			const event: LookRequest = { id, kind: body.kind as string, args };
-			sub.res.write(`data: ${JSON.stringify(event)}\n\n`);
+			const request: LookRequest = { id, kind: body.kind as string, args };
+			const event = `data: ${JSON.stringify(request)}\n\n`;
+			pending.set(id, { subscriber: sub, event, resolve, timer });
+			sub.res?.write(event);
 		});
 		if (result.ok) return json(res, 200, result);
 		if (result.error.startsWith('timed out')) return json(res, 504, result);
@@ -208,6 +250,11 @@ export function createLookChannel(options: LookChannelOptions): LookChannel {
 		} catch (err) {
 			return json(res, 400, { error: (err as Error).message });
 		}
+		if (isRecord(body) && body.leaving === true) {
+			sub.leaving = true;
+			detach(sub, LEAVING_GRACE);
+			return res.writeHead(204).end();
+		}
 		sub.active = Date.now();
 		sub.seq = ++order;
 		if (isRecord(body) && typeof body.allowed === 'boolean') sub.allowed = body.allowed;
@@ -235,7 +282,12 @@ export function createLookChannel(options: LookChannelOptions): LookChannel {
 		},
 		close: () => {
 			for (const [id] of pending) settle(id, { ok: false, error: 'proxy closing' });
-			for (const sub of subscribers.values()) sub.res.end();
+			for (const sub of subscribers.values()) {
+				if (sub.grace) clearTimeout(sub.grace);
+				const res = sub.res;
+				sub.res = null;
+				res?.end();
+			}
 			subscribers.clear();
 		},
 	};

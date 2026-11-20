@@ -29,8 +29,10 @@ export type ParentMessage = Marked<
 	/** Drops the selection; `id` records it as the targets of comment #id so its pin sticks to the picked elements. */
 	| { type: 'pick:clear'; id?: number }
 	| { type: 'pins:set'; pins: Pin[] }
-	/** The user's consent to `yubi look`; off by the pane's switch. */
+	/** The user's consent to `yubi look`, `go` and `show`; off by the pane's switch. */
 	| { type: 'look:allow'; allowed: boolean }
+	/** Scroll to the agent's highlight #id again, re-drawing it if it expired. */
+	| { type: 'show:focus'; id: number }
 >;
 
 /** App document → parent window. */
@@ -43,6 +45,12 @@ export type ChildMessage = Marked<
 	| { type: 'route'; route: string }
 	/** One `yubi look` request was answered. */
 	| { type: 'look:served'; kind: string; selector?: string }
+	/** `yubi go` moved the app from one route to another. */
+	| { type: 'agent:navigated'; from: string; to: string }
+	/** `yubi show` drew highlight #id. */
+	| { type: 'agent:showed'; id: number; label: string }
+	/** The dev server's hot-reload socket opened or dropped. */
+	| { type: 'hmr'; status: 'connected' | 'lost' }
 >;
 
 const PARENT_TYPES: ReadonlySet<string> = new Set([
@@ -51,6 +59,7 @@ const PARENT_TYPES: ReadonlySet<string> = new Set([
 	'pick:clear',
 	'pins:set',
 	'look:allow',
+	'show:focus',
 ]);
 const CHILD_TYPES: ReadonlySet<string> = new Set([
 	'pick:state',
@@ -60,6 +69,9 @@ const CHILD_TYPES: ReadonlySet<string> = new Set([
 	'pin:open',
 	'route',
 	'look:served',
+	'agent:navigated',
+	'agent:showed',
+	'hmr',
 ]);
 
 const isMarked = (data: unknown): data is { yubi: typeof YUBI; type: string } =>

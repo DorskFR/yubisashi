@@ -21,12 +21,18 @@ import {
 
 export type PaneStatus = 'idle' | 'loading' | 'waiting' | 'connected';
 export type BootStatus = 'idle' | 'pending' | 'timeout';
+export type HmrStatus = 'connected' | 'lost' | null;
+/** One thing the agent did in the framed app, newest first in the pane. */
+export type Activity =
+	| { key: number; kind: 'navigated'; text: string }
+	| { key: number; kind: 'showed'; text: string; id: number };
 
 export const START_PROMPT = 'start a yubisashi server now';
 export const START_POLL_MS = 2_000;
 export const START_TIMEOUT_MS = 180_000;
 export const LOOK_ALLOWED_KEY = 'yubisashi:look-allowed';
 export const LOOK_NOTICE_MS = 4_000;
+export const ACTIVITY_MAX = 20;
 
 type Storage = { getItem(key: string): string | null; setItem(key: string, value: string): void };
 
@@ -117,7 +123,12 @@ export class YubiController {
 	looks = $state(0);
 	/** The last served look, shown briefly. */
 	lookNotice = $state('');
+	/** The dev server's hot-reload socket in the framed page, when it has one. */
+	hmr = $state<HmrStatus>(null);
+	/** What the agent did with `yubi go` and `yubi show`, newest first. */
+	activity = $state<Activity[]>([]);
 	frame: HTMLIFrameElement | null = null;
+	private activityKey = 0;
 	private noticeTimer: ReturnType<typeof setTimeout> | null = null;
 	private sent = false;
 	private pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -247,8 +258,26 @@ export class YubiController {
 		const win = this.frame?.contentWindow;
 		if (!origin || !win || path === null) return;
 		this.picking = false;
+		this.hmr = null;
 		this.route = path;
-		win.location.assign(origin + path);
+		win.location.href = origin + path;
+	}
+
+	/** Reload the framed page where it is, e.g. once hot reload stopped reaching it. */
+	reloadFrame() {
+		this.navigate(this.route || '/');
+	}
+
+	/** Scroll the app back to the agent's highlight #id. */
+	focusShow(id: number) {
+		this.post({ type: 'show:focus', id });
+	}
+
+	private note(
+		entry: { kind: 'navigated'; text: string } | { kind: 'showed'; text: string; id: number },
+	) {
+		const next: Activity = { ...entry, key: ++this.activityKey };
+		this.activity = [next, ...this.activity].slice(0, ACTIVITY_MAX);
 	}
 
 	/** A fresh authenticated URL of the selected preview, for a new tab. */
@@ -266,6 +295,7 @@ export class YubiController {
 		const preview = this.selected;
 		if (!preview) return;
 		this.picking = false;
+		this.hmr = null;
 		this.status = 'loading';
 		this.error = '';
 		try {
@@ -350,6 +380,16 @@ export class YubiController {
 				break;
 			case 'look:served':
 				this.noteLook(msg);
+				break;
+			case 'agent:navigated':
+				this.route = msg.to;
+				this.note({ kind: 'navigated', text: m.agentNavigated(msg.from, msg.to) });
+				break;
+			case 'agent:showed':
+				this.note({ kind: 'showed', text: m.agentShowed(msg.label), id: msg.id });
+				break;
+			case 'hmr':
+				this.hmr = msg.status;
 				break;
 		}
 	}

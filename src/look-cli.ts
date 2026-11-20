@@ -134,6 +134,12 @@ export async function look(
 		case 200:
 			return { data: (reply.body as { data: unknown }).data };
 		case 503:
+			if (error === 'browser gone')
+				return {
+					code: EXIT.noBrowser,
+					message:
+						'the tab answering this request went away (closed, reloaded or lost its connection to the proxy) and did not come back',
+				};
 			return {
 				code: EXIT.noBrowser,
 				message: `no browser has the app open: ask the user to open the yubisashi pane (${error})`,
@@ -202,6 +208,8 @@ export function formatStyles(result: StylesResult): string {
 }
 
 export const SHOT_TIMEOUT_MS = 60_000;
+/** Time the browser keeps for answering after the shot's own budget runs out. */
+const SHOT_MARGIN_MS = 3_000;
 
 const pngSize = (png: Buffer) =>
 	png.length >= 24 && png.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))
@@ -315,11 +323,13 @@ export function parseLook(argv: string[]): LookCommand | { usage: string; error?
 			if (scale !== undefined && !(scale > 0 && scale <= 4))
 				return { usage: LOOK_USAGE, error: `invalid --scale ${values.scale}` };
 			const out = values.out;
+			const timeoutMs = seconds === undefined ? SHOT_TIMEOUT_MS : base.timeoutMs;
+			const budget = Math.max(1000, timeoutMs - SHOT_MARGIN_MS);
 			return {
 				...base,
-				timeoutMs: seconds === undefined ? SHOT_TIMEOUT_MS : base.timeoutMs,
+				timeoutMs,
 				kind,
-				args: { selector, scale },
+				args: { selector, scale, budget },
 				format: (d) => formatShot(d as SavedShot),
 				finish: (d, io) => saveShot(d as ShotResult, io, out),
 			};
