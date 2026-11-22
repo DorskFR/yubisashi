@@ -1,0 +1,4 @@
+#!/bin/sh
+set -e
+files=$(git diff --cached --name-only --diff-filter=ACMR -- '*.ts' '*.js' '*.mjs')
+[ -z "$files" ] || printf '%s\n' "$files" | xargs npx biome check --no-errors-on-unmatched

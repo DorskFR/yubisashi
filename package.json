@@ -57,7 +57,6 @@
 		"lint": "biome check .",
 		"format": "biome check --write .",
 		"test": "npm run build && node --test --test-timeout=60000 test/*.test.ts && npm run test:cctui",
-		"prepare": "lefthook install || true",
 		"prepublishOnly": "npm run build",
 		"test:cctui": "npm run build:cctui && vitest run --config cctui-plugin/vitest.config.ts",
 		"build:cctui": "node cctui-plugin/scripts/build.ts"
@@ -80,7 +79,6 @@
 		"@sveltejs/vite-plugin-svelte": "^7.3.1",
 		"@types/node": "^22.18.0",
 		"happy-dom": "^20.10.6",
-		"lefthook": "^2.1.12",
 		"playwright": "^1.55.0",
 		"svelte": "5.57.1",
 		"typescript": "^5.9.0",
