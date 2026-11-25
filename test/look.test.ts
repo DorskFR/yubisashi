@@ -64,6 +64,7 @@ before(async () => {
 	kit = await createVite({
 		root: KIT_ROOT,
 		configFile: false,
+		cacheDir: fileURLToPath(new URL('./fixture-kit/node_modules/.vite-look/', import.meta.url)),
 		logLevel: 'silent',
 		plugins: [sveltekit()],
 		server: { host: '127.0.0.1', port: 0 },
