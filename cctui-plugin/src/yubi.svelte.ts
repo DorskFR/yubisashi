@@ -33,6 +33,8 @@ export const START_TIMEOUT_MS = 180_000;
 export const LOOK_ALLOWED_KEY = 'yubisashi:look-allowed';
 export const LOOK_NOTICE_MS = 4_000;
 export const ACTIVITY_MAX = 20;
+/** Grid sizes the pane offers in ruler mode; 0 is no grid. */
+export const GRID_SIZES = [0, 4, 8, 16] as const;
 
 type Storage = { getItem(key: string): string | null; setItem(key: string, value: string): void };
 
@@ -109,6 +111,10 @@ export class YubiController {
 	refreshing = $state(false);
 	status = $state<PaneStatus>('idle');
 	picking = $state(false);
+	/** Ruler mode in the framed picker: sizes, distances, alignment guides. */
+	ruler = $state(false);
+	/** Grid drawn in ruler mode, in px; 0 is none. */
+	grid = $state(0);
 	route = $state('');
 	pins = $state<Pin[]>([]);
 	/** Bumped to remount the iframe (reload). */
@@ -258,6 +264,7 @@ export class YubiController {
 		const win = this.frame?.contentWindow;
 		if (!origin || !win || path === null) return;
 		this.picking = false;
+		this.ruler = false;
 		this.hmr = null;
 		this.route = path;
 		win.location.href = origin + path;
@@ -295,6 +302,7 @@ export class YubiController {
 		const preview = this.selected;
 		if (!preview) return;
 		this.picking = false;
+		this.ruler = false;
 		this.hmr = null;
 		this.status = 'loading';
 		this.error = '';
@@ -313,11 +321,13 @@ export class YubiController {
 		this.selected = null;
 		this.url = '';
 		this.picking = false;
+		this.ruler = false;
 		this.status = 'idle';
 	}
 
 	onFrameLoad() {
 		if (this.status === 'loading') this.status = 'waiting';
+		this.ruler = false;
 		if (this.pins.length) this.post({ type: 'pins:set', pins: this.pins });
 		this.post({ type: 'look:allow', allowed: this.lookAllowed });
 	}
@@ -351,6 +361,17 @@ export class YubiController {
 		this.post({ type: this.picking ? 'pick:stop' : 'pick:start' });
 	}
 
+	toggleRuler() {
+		if (this.status !== 'connected') return;
+		this.post({ type: 'ruler:set', on: !this.ruler, grid: this.grid });
+	}
+
+	/** Grid size for ruler mode; sent at once when the ruler is on. */
+	setGrid(grid: number) {
+		this.grid = grid > 0 ? grid : 0;
+		if (this.ruler) this.post({ type: 'ruler:set', on: true, grid: this.grid });
+	}
+
 	onMessage(e: MessageEvent) {
 		if (!isTrustedEvent(e, this.frame, this.origin)) return;
 		const msg = parseChildMessage(e.data);
@@ -368,6 +389,9 @@ export class YubiController {
 				break;
 			case 'pick:cancel':
 				this.picking = false;
+				break;
+			case 'ruler:state':
+				this.ruler = msg.on;
 				break;
 			case 'pin:open':
 				this.composer.focus();

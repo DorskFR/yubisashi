@@ -1,6 +1,8 @@
+import type { Rect } from '../../src/picker/measure.ts';
 import {
 	type ChildMessage,
 	type Frame,
+	type MeasurePair,
 	type ParentMessage,
 	type Target,
 	type Unmarked,
@@ -10,6 +12,7 @@ import {
 export type {
 	ChildMessage,
 	Frame,
+	MeasurePair,
 	ParentMessage,
 	Pin,
 	Target,
@@ -32,6 +35,19 @@ function parseFrame(v: unknown): Frame | null {
 	if (isNum(v.column)) f.column = v.column;
 	if (isStr(v.name)) f.name = v.name;
 	return f;
+}
+
+function parseRect(v: unknown): Rect | null {
+	if (!isObj(v)) return null;
+	const { x, y, width, height } = v;
+	return isNum(x) && isNum(y) && isNum(width) && isNum(height) ? { x, y, width, height } : null;
+}
+
+function parseMeasure(v: unknown): MeasurePair | null {
+	if (!isObj(v)) return null;
+	const a = parseRect(v.a);
+	const b = parseRect(v.b);
+	return a && b ? { a, b } : null;
 }
 
 function parseTarget(v: unknown): Target | null {
@@ -89,14 +105,22 @@ export function parseChildMessage(data: unknown): ChildMessage | null {
 				if (!p) return null;
 				targets.push(p);
 			}
-			return {
+			const selected: Selected = {
 				yubi: YUBI,
 				type: 'pick:selected',
 				targets,
 				route: data.route,
 				viewport: { width, height },
 			};
+			if (data.measure !== undefined) {
+				const measure = parseMeasure(data.measure);
+				if (!measure || targets.length !== 2) return null;
+				selected.measure = measure;
+			}
+			return selected;
 		}
+		case 'ruler:state':
+			return typeof data.on === 'boolean' ? { yubi: YUBI, type: 'ruler:state', on: data.on } : null;
 		case 'pick:cancel':
 			return { yubi: YUBI, type: 'pick:cancel' };
 		case 'pin:open':

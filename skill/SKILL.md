@@ -50,6 +50,10 @@ tell the user to open the URL in a tab once and accept it.
 
 Comments without a target are general remarks about the app.
 
+A comment made in the pane's ruler mode has two targets (A and B) and a `measure (ruler):`
+block: both elements with their source, the distances between their nearest edges, the
+alignments and the near misses. Fix what it points at and check with `look measure`.
+
 ## Look for yourself: `yubi look`
 
 While `yubi dev` runs and the user has the yubisashi pane open, you can read what their browser
@@ -60,6 +64,7 @@ shows right now. Run these from the directory where `yubi dev` was started (it l
 npx -y @dorsk/yubisashi look page                      # route, title, viewport, scroll, focus
 npx -y @dorsk/yubisashi look dom '.card'               # live DOM under a selector (default body)
 npx -y @dorsk/yubisashi look styles '.card > h2'       # computed style, box, visibility, source
+npx -y @dorsk/yubisashi look measure '.dot' '.emoji'   # distances and alignment between two elements
 npx -y @dorsk/yubisashi look shot                      # PNG of the viewport, path printed
 npx -y @dorsk/yubisashi look shot '.card' --scale 2    # PNG of one element
 ```
@@ -78,6 +83,10 @@ When to use it:
   CSS variables, the source `file:line` and the component chain.
 - Prefer `page`, `dom` and `styles` (cheap text) over `shot` (image tokens). Use `shot` only for
   visual questions: alignment, colours, what the user actually sees.
+- For spacing and alignment ("misaligned", "too much gap"), use `look measure <selA> <selB>`:
+  it prints the px gap between the nearest edges on each axis, which edges and centres line up
+  (within 0.5 px) and the near misses (up to 3 px off, e.g. `near miss: centre x A=438 B=441
+  (3px off)`). Run it again after the fix to confirm the numbers.
 - `look dom` annotates Svelte elements with `data-yubi-src="file:line"`; that is where to edit.
 
 Every request shows up in the pane as "Agent looked: …", and the user can switch looking off.

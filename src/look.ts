@@ -16,8 +16,16 @@ const ORPHAN_WAIT = 3_000;
 export const MAX_RESULT_BYTES = 10 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 64 * 1024;
 
-export type LookKind = 'page' | 'dom' | 'styles' | 'shot' | 'go' | 'show';
-export const LOOK_KINDS: readonly LookKind[] = ['page', 'dom', 'styles', 'shot', 'go', 'show'];
+export type LookKind = 'page' | 'dom' | 'styles' | 'measure' | 'shot' | 'go' | 'show';
+export const LOOK_KINDS: readonly LookKind[] = [
+	'page',
+	'dom',
+	'styles',
+	'measure',
+	'shot',
+	'go',
+	'show',
+];
 
 export type LookArgs = Record<string, unknown>;
 export type LookRequest = { id: string; kind: string; args: LookArgs };

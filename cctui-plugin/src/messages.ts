@@ -12,6 +12,13 @@ export const messages = {
 	pick: 'Comment on an element',
 	pickKey: 'Press C to toggle picking',
 	pickStop: 'Stop commenting on elements',
+	ruler: 'Measure: sizes, distances and alignment',
+	rulerKey: 'Press R to toggle the ruler',
+	rulerStop: 'Stop measuring',
+	gridLabel: 'Grid',
+	grid: (size: number) => (size ? `${size} px grid` : 'No grid'),
+	statusRuler:
+		'Ruler — click an element, hover another for distances; click it to comment on the measurement.',
 	pins: (count: number) => `${count} pinned`,
 	preview: (port: number) => `port ${port}`,
 	previewLabel: 'Preview',

@@ -138,3 +138,35 @@ describe('origin gate', () => {
 		expect(isTrustedEvent({ source: win, origin }, frame, null)).toBe(false);
 	});
 });
+
+describe('ruler messages', () => {
+	const pair = { a: { x: 1, y: 2, width: 3, height: 4 }, b: { x: 5, y: 6, width: 7, height: 8 } };
+	const selected = {
+		yubi: YUBI,
+		type: 'pick:selected',
+		targets: [target, target],
+		route: '/',
+		viewport: { width: 1, height: 1 },
+	};
+
+	it('parses ruler:state and rejects a malformed one', () => {
+		expect(parseChildMessage({ yubi: YUBI, type: 'ruler:state', on: true })).toEqual({
+			yubi: YUBI,
+			type: 'ruler:state',
+			on: true,
+		});
+		expect(parseChildMessage({ yubi: YUBI, type: 'ruler:state', on: 'yes' })).toBeNull();
+	});
+
+	it('keeps a valid measurement on a two-target selection and rejects a broken one', () => {
+		const msg = parseChildMessage({ ...selected, measure: { ...pair, extra: 1 } });
+		expect(msg?.type === 'pick:selected' && msg.measure).toEqual(pair);
+		expect(parseChildMessage({ ...selected, measure: { a: pair.a } })).toBeNull();
+		expect(
+			parseChildMessage({ ...selected, measure: { ...pair, b: { ...pair.b, x: 'a' } } }),
+		).toBeNull();
+		expect(parseChildMessage({ ...selected, targets: [target], measure: pair })).toBeNull();
+		const plain = parseChildMessage(selected);
+		expect(plain?.type === 'pick:selected' && 'measure' in plain).toBe(false);
+	});
+});

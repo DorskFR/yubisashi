@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PREVIEWS_DISABLED, type Preview } from './previews.ts';
 import {
 	ACTIVITY_MAX,
+	GRID_SIZES,
 	LOOK_ALLOWED_KEY,
 	LOOK_NOTICE_MS,
 	readLookAllowed,
@@ -431,5 +432,66 @@ describe('look consent', () => {
 		expect(ctl.lookNotice).toBe('');
 		expect(ctl.looks).toBe(2);
 		ctl.destroy();
+	});
+});
+
+describe('ruler mode', () => {
+	it('toggles through the picker, follows ruler:state and sends the grid', async () => {
+		const { ctl, contentWindow, deliver } = await connected();
+		ctl.toggleRuler();
+		expect(contentWindow.postMessage.mock.calls).toHaveLength(0);
+		deliver({ yubi: 1, type: 'route', route: '/' });
+		ctl.toggleRuler();
+		expect(contentWindow.postMessage.mock.calls.at(-1)?.[0]).toEqual({
+			yubi: 1,
+			type: 'ruler:set',
+			on: true,
+			grid: 0,
+		});
+		expect(ctl.ruler).toBe(false);
+		deliver({ yubi: 1, type: 'ruler:state', on: true });
+		expect(ctl.ruler).toBe(true);
+		ctl.setGrid(GRID_SIZES[2]);
+		expect(ctl.grid).toBe(8);
+		expect(contentWindow.postMessage.mock.calls.at(-1)?.[0]).toEqual({
+			yubi: 1,
+			type: 'ruler:set',
+			on: true,
+			grid: 8,
+		});
+		ctl.toggleRuler();
+		expect(contentWindow.postMessage.mock.calls.at(-1)?.[0]).toEqual({
+			yubi: 1,
+			type: 'ruler:set',
+			on: false,
+			grid: 8,
+		});
+		deliver({ yubi: 1, type: 'ruler:state', on: false });
+		expect(ctl.ruler).toBe(false);
+	});
+
+	it('a comment made in ruler mode carries the measurement block into the composer', async () => {
+		const { ctl, composer, deliver } = await connected();
+		deliver({ yubi: 1, type: 'ruler:state', on: true });
+		deliver({
+			yubi: 1,
+			type: 'pick:selected',
+			targets: [TARGET, { ...TARGET, selector: 'body > p', tag: 'p' }],
+			route: '/',
+			viewport: { width: 1000, height: 700 },
+			measure: {
+				a: { x: 600, y: 100, width: 100, height: 40 },
+				b: { x: 618, y: 180, width: 60, height: 30 },
+			},
+		});
+		expect(composer.insertText).toHaveBeenCalledTimes(1);
+		const text = composer.insertText.mock.calls[0]?.[0] as string;
+		expect(text.startsWith('[yubisashi #1] on / (viewport 1000x700)')).toBe(true);
+		expect(text).toContain('measure (ruler):');
+		expect(text).toContain('  A <h1> src/routes/+page.svelte:5: 100x40 at 600,100');
+		expect(text).toContain('  B <p> src/routes/+page.svelte:5: 60x30 at 618,180');
+		expect(text).toContain('  vertical: 40px gap (A bottom → B top)');
+		expect(text).toContain('  near miss: centre x A=650 B=648 (2px off)');
+		expect(ctl.pins).toEqual([{ id: 1, selector: 'body > h1' }]);
 	});
 });

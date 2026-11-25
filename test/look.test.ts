@@ -314,6 +314,56 @@ describe('look dom and styles', () => {
 	});
 });
 
+describe('look measure', () => {
+	test('returns the gap and the centre alignment between two known boxes', async () => {
+		const run = await yubi(dir, 'measure', '#ruler-a', '#ruler-b', '--json');
+		assert.equal(run.code, 0, run.stderr);
+		const result = JSON.parse(run.stdout);
+		assert.deepEqual(result.a, { x: 600, y: 100, width: 100, height: 40 });
+		assert.deepEqual(result.b, { x: 724, y: 110, width: 60, height: 20 });
+		assert.equal(result.horizontal.relation, 'after');
+		assert.equal(result.horizontal.gap, 24);
+		assert.equal(result.vertical.relation, 'overlap');
+		assert.deepEqual(result.alignments, [
+			{ edge: 'centre-y', axis: 'y', a: 120, b: 120, delta: 0, status: 'aligned' },
+		]);
+		assert.equal(result.elements.a.selector, '#ruler-a');
+		assert.equal(result.elements.a.source.file, 'src/routes/+page.svelte');
+		assert.equal(typeof result.elements.a.source.line, 'number');
+	});
+
+	test('prints the distances and flags a 2 px near miss with the source lines', async () => {
+		const run = await yubi(dir, 'measure', '#ruler-a', '#ruler-c');
+		assert.equal(run.code, 0, run.stderr);
+		assert.match(
+			run.stdout,
+			/^A <div> #ruler-a \(src\/routes\/\+page\.svelte:\d+\): 100x40 at 600,100$/m,
+		);
+		assert.match(
+			run.stdout,
+			/^B <div> #ruler-c( \(src\/routes\/\+page\.svelte:\d+\))?: 60x30 at 618,180$/m,
+		);
+		assert.match(run.stdout, /^vertical: 40px gap \(A bottom → B top\)$/m);
+		assert.match(run.stdout, /^near miss: centre x A=650 B=648 \(2px off\)$/m);
+		const served = (await messages()).filter((m) => m.type === 'look:served').at(-1);
+		assert.deepEqual(served, {
+			yubi: 1,
+			type: 'look:served',
+			kind: 'measure',
+			selector: '#ruler-a',
+		});
+	});
+
+	test('needs two selectors, and each must match', async () => {
+		const one = await yubi(dir, 'measure', '#ruler-a');
+		assert.equal(one.code, 2);
+		assert.match(one.stderr, /look measure needs two selectors/);
+		const none = await yubi(dir, 'measure', '#ruler-a', '.nope');
+		assert.notEqual(none.code, 0);
+		assert.match(none.stderr, /no element matches "\.nope"/);
+	});
+});
+
 const pngSize = (png: Buffer) => ({ width: png.readUInt32BE(16), height: png.readUInt32BE(20) });
 const PNG_MAGIC = Buffer.from('89504e470d0a1a0a', 'hex');
 
