@@ -10,7 +10,8 @@ export const DEFAULT_LOOK_TIMEOUT = 15_000;
 /** How long a dropped event stream may take to reconnect before its tab counts as gone. */
 export const DEFAULT_LOOK_GRACE = 5_000;
 const LEAVING_GRACE = 1_000;
-/** How long a request whose tab went away waits for another tab of the app to pick it up. */
+/** How long a request whose tab went away, or that arrives right after a tab left, waits for
+ *  another tab of the app to pick it up. */
 const ORPHAN_WAIT = 3_000;
 export const MAX_RESULT_BYTES = 10 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 64 * 1024;
@@ -50,6 +51,8 @@ type Pending = {
 	resolve: (result: LookResult) => void;
 	timer: ReturnType<typeof setTimeout>;
 	orphan: ReturnType<typeof setTimeout> | null;
+	/** Never delivered to any tab: the next tab must still allow looking. */
+	fresh: boolean;
 };
 
 export const newToken = () => randomBytes(24).toString('base64url');
@@ -109,6 +112,13 @@ export function createLookChannel(options: LookChannelOptions): LookChannel {
 	const subscribers = new Map<string, Subscriber>();
 	const pending = new Map<string, Pending>();
 	let order = 0;
+	let lastLeft = 0;
+
+	const justLeft = () => {
+		if (Date.now() - lastLeft < ORPHAN_WAIT) return true;
+		for (const s of subscribers.values()) if (s.leaving) return true;
+		return false;
+	};
 
 	const current = () => {
 		let best: Subscriber | undefined;
@@ -134,7 +144,12 @@ export function createLookChannel(options: LookChannelOptions): LookChannel {
 		return true;
 	};
 
-	const assign = (p: Pending, sub: Subscriber) => {
+	const assign = (id: string, p: Pending, sub: Subscriber) => {
+		if (p.fresh && !sub.allowed) {
+			settle(id, { ok: false, error: 'the user has turned looking off' });
+			return;
+		}
+		p.fresh = false;
 		if (p.orphan) clearTimeout(p.orphan);
 		p.orphan = null;
 		p.subscriber = sub;
@@ -147,10 +162,11 @@ export function createLookChannel(options: LookChannelOptions): LookChannel {
 		if (subscribers.get(sub.id) !== sub) return;
 		if (sub.grace) clearTimeout(sub.grace);
 		subscribers.delete(sub.id);
+		lastLeft = Date.now();
 		for (const [id, p] of pending) {
 			if (p.subscriber !== sub) continue;
 			const next = current();
-			if (next) assign(p, next);
+			if (next) assign(id, p, next);
 			else {
 				p.subscriber = null;
 				p.orphan = setTimeout(() => settle(id, { ok: false, error: 'browser gone' }), ORPHAN_WAIT);
@@ -179,7 +195,7 @@ export function createLookChannel(options: LookChannelOptions): LookChannel {
 				grace: null,
 			};
 			subscribers.set(id, sub);
-			for (const p of pending.values()) if (p.subscriber === null) assign(p, sub);
+			for (const [pid, p] of pending) if (p.subscriber === null) assign(pid, p, sub);
 			return sub;
 		}
 		const stale = known.res;
@@ -189,7 +205,10 @@ export function createLookChannel(options: LookChannelOptions): LookChannel {
 		if (known.grace) clearTimeout(known.grace);
 		known.grace = null;
 		stale?.end();
-		for (const p of pending.values()) if (p.subscriber === known) res.write(p.event);
+		for (const [pid, p] of pending) {
+			if (p.subscriber === known) res.write(p.event);
+			else if (p.subscriber === null) assign(pid, p, known);
+		}
 		return known;
 	};
 
@@ -227,8 +246,8 @@ export function createLookChannel(options: LookChannelOptions): LookChannel {
 		const args = isRecord(body.args) ? body.args : {};
 		const wait = typeof body.timeout === 'number' && body.timeout > 0 ? body.timeout : timeout;
 		const sub = current();
-		if (!sub) return json(res, 503, { error: 'no browser has the app open' });
-		if (!sub.allowed) return json(res, 403, { error: 'the user has turned looking off' });
+		if (!sub && !justLeft()) return json(res, 503, { error: 'no browser has the app open' });
+		if (sub && !sub.allowed) return json(res, 403, { error: 'the user has turned looking off' });
 		const id = nonce();
 		const result = await new Promise<LookResult>((resolve) => {
 			const timer = setTimeout(() => {
@@ -236,12 +255,20 @@ export function createLookChannel(options: LookChannelOptions): LookChannel {
 			}, wait);
 			const request: LookRequest = { id, kind: body.kind as string, args };
 			const event = `data: ${JSON.stringify(request)}\n\n`;
-			pending.set(id, { subscriber: sub, event, resolve, timer, orphan: null });
-			sub.res?.write(event);
+			const orphan = sub
+				? null
+				: setTimeout(
+						() => settle(id, { ok: false, error: 'no browser has the app open' }),
+						ORPHAN_WAIT,
+					);
+			pending.set(id, { subscriber: sub ?? null, event, resolve, timer, orphan, fresh: !sub });
+			sub?.res?.write(event);
 		});
 		if (result.ok) return json(res, 200, result);
 		if (result.error.startsWith('timed out')) return json(res, 504, result);
-		if (result.error === 'browser gone') return json(res, 503, result);
+		if (result.error === 'browser gone' || result.error === 'no browser has the app open')
+			return json(res, 503, result);
+		if (result.error === 'the user has turned looking off') return json(res, 403, result);
 		return json(res, 422, result);
 	}
 
