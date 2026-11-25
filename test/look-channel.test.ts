@@ -177,10 +177,83 @@ describe('look channel liveness', () => {
 		await tab.ready;
 		await tick(50);
 		assert.equal((await state('tab-d', { leaving: true })).status, 204);
+		const reply = ask('page');
+		await tick(300);
+		assert.equal(tab.events.length, 0, 'the leaving tab is not asked');
+		tab.cut();
+		const { status, body } = await reply;
+		assert.equal(status, 503);
+		assert.equal(body.error, 'no browser has the app open');
+	});
+
+	test('a request that arrives while a tab reloads waits for the reloaded tab', async () => {
+		const old = subscribe('tab-e');
+		await old.ready;
+		await tick(50);
+		assert.equal((await state('tab-e', { leaving: true })).status, 204);
+		old.cut();
+		const started = Date.now();
+		const reply = ask('page');
+		await tick(400);
+		const fresh = subscribe('tab-e-reloaded');
+		await fresh.ready;
+		const event = await fresh.next(1);
+		assert.equal(event.kind, 'page');
+		await answer(event.id, { route: '/' });
+		const { status, body } = await reply;
+		assert.equal(status, 200, JSON.stringify(body));
+		assert.ok(Date.now() - started < 3000, 'answered by the next tab, not after the wait');
+		fresh.cut();
+		await tick(1700);
+	});
+
+	test('a request that arrives just after a tab dropped waits for the next tab', async () => {
+		const tab = subscribe('tab-f');
+		await tab.ready;
+		await tick(50);
+		tab.cut();
+		await tick(1700);
+		assert.equal(channel.subscribers, 0, 'the tab outlasted its reconnect grace');
+		const reply = ask('dom', { selector: 'h1' });
+		await tick(300);
+		const next = subscribe('tab-f-next');
+		await next.ready;
+		const event = await next.next(1);
+		assert.equal(event.kind, 'dom');
+		await answer(event.id, { html: '<h1>' });
+		const { status, body } = await reply;
+		assert.equal(status, 200, JSON.stringify(body));
+		next.cut();
+		await tick(1700);
+	});
+
+	test('a request in the gap is refused when the next tab has looking off', async () => {
+		await tick(3100);
+		const old = subscribe('tab-g');
+		await old.ready;
+		await tick(50);
+		assert.equal((await state('tab-g', { leaving: true })).status, 204);
+		old.cut();
+		const reply = ask('page');
+		await tick(300);
+		const abort = new AbortController();
+		try {
+			await fetch(`${base}/__yubi/look/events?sub=tab-g-off&allowed=0`, { signal: abort.signal });
+			const { status, body } = await reply;
+			assert.equal(status, 403);
+			assert.equal(body.error, 'the user has turned looking off');
+		} finally {
+			abort.abort();
+			await tick(1700);
+		}
+	});
+
+	test('with no tab seen recently, a request fails at once', async () => {
+		await tick(3100);
+		const started = Date.now();
 		const { status, body } = await ask('page');
 		assert.equal(status, 503);
 		assert.equal(body.error, 'no browser has the app open');
-		tab.cut();
-		await tick(1200);
+		assert.ok(Date.now() - started < 500, `took ${Date.now() - started}ms`);
 	});
 });

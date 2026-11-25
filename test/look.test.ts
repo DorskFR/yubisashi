@@ -68,6 +68,17 @@ before(async () => {
 		plugins: [sveltekit()],
 		server: { host: '127.0.0.1', port: 0 },
 	});
+	const hot = kit.environments.client.hot;
+	const send = hot.send.bind(hot) as (...args: unknown[]) => void;
+	hot.send = ((...args: unknown[]) => {
+		const payload = args[0] as { type?: string; path?: string; triggeredBy?: string } | string;
+		const type = typeof payload === 'string' ? payload : payload?.type;
+		if (type === 'full-reload') {
+			const detail = typeof payload === 'string' ? '' : (payload.triggeredBy ?? payload.path ?? '');
+			console.error(`[vite] full reload at ${new Date().toISOString()} ${detail}`.trimEnd());
+		}
+		send(...args);
+	}) as typeof hot.send;
 	await kit.listen();
 	const address = kit.httpServer?.address() as AddressInfo;
 	dev = await startDev({
@@ -371,7 +382,7 @@ describe('look shot', () => {
 		const res = await fetch(`${origin}/__yubi/look`, {
 			method: 'POST',
 			headers: { authorization: `Bearer ${state.token}`, 'content-type': 'application/json' },
-			body: JSON.stringify({ kind: 'shot', args: { budget: 1 } }),
+			body: JSON.stringify({ kind: 'shot', args: { budget: 1 }, timeout: 30_000 }),
 		});
 		assert.equal(res.status, 422);
 		assert.match(((await res.json()) as { error: string }).error, /time budget/);
