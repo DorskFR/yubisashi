@@ -78,4 +78,14 @@ describe('YubisashiPane', () => {
 		close?.click();
 		expect(mounted.onclose).toHaveBeenCalledOnce();
 	});
+
+	it('offers the ruler toggle next to the pick button, disabled until the picker connects', async () => {
+		mounted = render([preview('abc123', 4780)]);
+		await settle();
+		const button = q('ruler') as HTMLButtonElement | null;
+		expect(button?.getAttribute('aria-label')).toBe(m.ruler);
+		expect(button?.title).toContain(m.rulerKey);
+		expect(button?.disabled).toBe(true);
+		expect(q('grid')).toBeNull();
+	});
 });

@@ -2,7 +2,7 @@
 	import { Badge, Button, IconButton, Input, Select, Switch, Text, Toolbar } from '@dorsk/tsumikit';
 	import type { PaneProps } from '../sdk/types.ts';
 	import { messages as m } from './messages.ts';
-	import { YubiController } from './yubi.svelte.ts';
+	import { GRID_SIZES, YubiController } from './yubi.svelte.ts';
 
 	let { session, composer, params, onclose }: PaneProps = $props();
 
@@ -11,6 +11,7 @@
 
 	const statusText = $derived.by(() => {
 		if (ctl.picking) return m.statusPicking;
+		if (ctl.ruler) return m.statusRuler;
 		switch (ctl.status) {
 			case 'idle':
 				return m.statusIdle;
@@ -26,6 +27,7 @@
 	const options = $derived(
 		ctl.previews.map((p) => ({ value: p.id, label: m.preview(p.port), hint: new URL(p.url).host }))
 	);
+	const gridOptions = GRID_SIZES.map((size) => ({ value: String(size), label: m.grid(size) }));
 
 	let applied: string | null = null;
 	$effect(() => {
@@ -37,12 +39,14 @@
 	$effect(() => () => ctl.destroy());
 
 	function onKey(e: KeyboardEvent) {
-		if (e.key !== 'c' && e.key !== 'C') return;
+		const key = e.key.toLowerCase();
+		if (key !== 'c' && key !== 'r') return;
 		if (e.altKey || e.ctrlKey || e.metaKey) return;
 		const t = e.target as HTMLElement | null;
 		if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
 		e.preventDefault();
-		ctl.togglePick();
+		if (key === 'c') ctl.togglePick();
+		else ctl.toggleRuler();
 	}
 
 	async function openTab() {
@@ -112,6 +116,30 @@
 			>
 				<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
 			</IconButton>
+			<IconButton
+				box="sm"
+				variant={ctl.ruler ? 'primary' : 'default'}
+				pressed={ctl.ruler}
+				label={ctl.ruler ? m.rulerStop : m.ruler}
+				title={`${ctl.ruler ? m.rulerStop : m.ruler} — ${m.rulerKey}`}
+				disabled={ctl.status !== 'connected'}
+				data-journey="ruler"
+				onclick={() => ctl.toggleRuler()}
+			>
+				<path
+					d="M21.3 8.7 8.7 21.3a1 1 0 0 1-1.4 0l-4.6-4.6a1 1 0 0 1 0-1.4L15.3 2.7a1 1 0 0 1 1.4 0l4.6 4.6a1 1 0 0 1 0 1.4zM7.5 10.5l2 2M10.5 7.5l2 2M13.5 4.5l2 2M4.5 13.5l2 2"
+				/>
+			</IconButton>
+			{#if ctl.ruler}
+				<Select
+					size="sm"
+					options={gridOptions}
+					value={String(ctl.grid)}
+					aria-label={m.gridLabel}
+					data-journey="grid"
+					onchange={(e) => ctl.setGrid(Number((e.currentTarget as HTMLSelectElement).value))}
+				/>
+			{/if}
 		</div>
 	</Toolbar>
 	<div class="frame">

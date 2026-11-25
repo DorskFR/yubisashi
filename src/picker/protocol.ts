@@ -1,3 +1,5 @@
+import type { Rect } from './measure.ts';
+
 /** Every message in both directions carries this marker; anything without it is ignored. */
 export const YUBI = 1 as const;
 
@@ -18,6 +20,9 @@ export type Pin = { id: number; selector: string };
 
 export type Viewport = { width: number; height: number };
 
+/** The two elements a ruler-mode comment measured, as viewport rects to 0.01 px. */
+export type MeasurePair = { a: Rect; b: Rect };
+
 type Marked<T> = T & { yubi: typeof YUBI };
 /** A message before the marker is stamped on. */
 export type Unmarked<T> = T extends unknown ? Omit<T, 'yubi'> : never;
@@ -33,13 +38,23 @@ export type ParentMessage = Marked<
 	| { type: 'look:allow'; allowed: boolean }
 	/** Scroll to the agent's highlight #id again, re-drawing it if it expired. */
 	| { type: 'show:focus'; id: number }
+	/** Ruler mode on or off; `grid` draws a grid of that many px (0 or absent: none). */
+	| { type: 'ruler:set'; on: boolean; grid?: number }
 >;
 
 /** App document → parent window. */
 export type ChildMessage = Marked<
 	| { type: 'pick:state'; picking: boolean }
 	| { type: 'pick:hover'; target: Target | null }
-	| { type: 'pick:selected'; targets: Target[]; route: string; viewport: Viewport }
+	| {
+			type: 'pick:selected';
+			targets: Target[];
+			route: string;
+			viewport: Viewport;
+			/** Set when the selection was made in ruler mode: targets[0] is A, targets[1] is B. */
+			measure?: MeasurePair;
+	  }
+	| { type: 'ruler:state'; on: boolean }
 	| { type: 'pick:cancel' }
 	| { type: 'pin:open'; id: number }
 	| { type: 'route'; route: string }
@@ -60,6 +75,7 @@ const PARENT_TYPES: ReadonlySet<string> = new Set([
 	'pins:set',
 	'look:allow',
 	'show:focus',
+	'ruler:set',
 ]);
 const CHILD_TYPES: ReadonlySet<string> = new Set([
 	'pick:state',
@@ -72,6 +88,7 @@ const CHILD_TYPES: ReadonlySet<string> = new Set([
 	'agent:navigated',
 	'agent:showed',
 	'hmr',
+	'ruler:state',
 ]);
 
 const isMarked = (data: unknown): data is { yubi: typeof YUBI; type: string } =>

@@ -8,8 +8,10 @@ import { DEFAULT_LOOK_TIMEOUT } from './look.ts';
 import type { PageInfo } from './picker/look.ts';
 import type { DomResult } from './picker/look-dom.ts';
 import { DEFAULT_DOM_DEPTH, DEFAULT_DOM_MAX_BYTES } from './picker/look-dom.ts';
+import type { MeasureResult } from './picker/look-measure.ts';
 import type { ShotResult } from './picker/look-shot.ts';
 import type { StylesResult } from './picker/look-styles.ts';
+import { formatMeasurement } from './picker/measure.ts';
 
 export const LOOK_USAGE = `Usage: yubi look <what> [selector] [options]
 
@@ -27,6 +29,10 @@ consent (the pane's "Let the agent look" switch).
       --props a,b,…       only these properties
       --all               every computed property
       --pseudo ::before   style a pseudo-element instead
+  measure <selA> <selB>   both rects, the px distance between their nearest edges (or the
+                          overlap) on each axis, and the edges and centres that line up
+                          (within 0.5 px) or nearly do (up to 3 px off); the numbers ruler
+                          mode draws in the pane
   shot [selector]         PNG of the viewport (or the element), rendered from the DOM inside
                           the user's tab; written to ${STATE_DIR}/shots/<timestamp>.png
       --out FILE          write the PNG there instead
@@ -207,6 +213,19 @@ export function formatStyles(result: StylesResult): string {
 	return lines.join('\n');
 }
 
+const sourceText = (s?: { file: string; line: number }) => (s ? ` (${s.file}:${s.line})` : '');
+
+export function formatMeasure(result: MeasureResult): string {
+	if ('error' in result) return `${result.error}${matchesText(result.matches)}`;
+	const { a, b } = result.elements;
+	return formatMeasurement(result, {
+		a: `<${a.tag}> ${a.selector}${sourceText(a.source)}`,
+		b: `<${b.tag}> ${b.selector}${sourceText(b.source)}`,
+	})
+		.map((l) => l.replace(/^ {2}/, ''))
+		.join('\n');
+}
+
 export const SHOT_TIMEOUT_MS = 60_000;
 /** Time the browser keeps for answering after the shot's own budget runs out. */
 const SHOT_MARGIN_MS = 3_000;
@@ -281,7 +300,7 @@ export function parseLook(argv: string[]): LookCommand | { usage: string; error?
 	}
 	const { values, positionals } = parsed;
 	if (values.help) return { usage: LOOK_USAGE };
-	const [kind, selector] = positionals;
+	const [kind, selector, other] = positionals;
 	const seconds = values.timeout === undefined ? undefined : Number(values.timeout);
 	if (seconds !== undefined && !(seconds > 0))
 		return { usage: LOOK_USAGE, error: `invalid --timeout ${values.timeout}` };
@@ -318,6 +337,15 @@ export function parseLook(argv: string[]): LookCommand | { usage: string; error?
 				format: (d) => formatStyles(d as StylesResult),
 			};
 		}
+		case 'measure':
+			if (!selector || !other)
+				return { usage: LOOK_USAGE, error: 'look measure needs two selectors' };
+			return {
+				...base,
+				kind,
+				args: { selector, other },
+				format: (d) => formatMeasure(d as MeasureResult),
+			};
 		case 'shot': {
 			const scale = values.scale === undefined ? undefined : Number(values.scale);
 			if (scale !== undefined && !(scale > 0 && scale <= 4))

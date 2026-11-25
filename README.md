@@ -74,6 +74,7 @@ where `yubi dev` was started.
 yubi look page                        # route, title, viewport, scroll, device pixel ratio, focus
 yubi look dom [selector]              # the live DOM, compact; default root is body
 yubi look styles <selector>           # computed style, box model, rect, visibility, source
+yubi look measure <selA> <selB>       # distances and alignment between two elements
 yubi look shot [selector]             # PNG rendered from the DOM in the user's tab
 ```
 
@@ -92,6 +93,11 @@ Every command takes `--json` (raw JSON) and `--timeout S` (default 15 s, 60 s fo
   visibility verdict (display, visibility, opacity, zero size, off-screen, covered by which
   element), the `var(--x)` values the element uses, the source `file:line` and the component
   chain. With several matches it takes the first.
+- `look measure` takes the first match of each selector and prints both rects, the distance
+  between their nearest edges on each axis (or, when they overlap on an axis, the overlap and
+  how far B's start and end sit from A's), and the edges and centres that line up within
+  0.5 px or miss by up to 3 px, with the source `file:line` of both. The numbers come from the
+  same code as the pane's ruler mode, so they match what the user saw.
 - `look shot` rasterizes the viewport or one element with a DOM-to-canvas renderer
   ([modern-screenshot](https://github.com/qq15725/modern-screenshot)) inside the user's tab, no
   permission prompt. The renderer is a separate chunk, `/__yubi/raster.js`, fetched on the first
@@ -113,6 +119,27 @@ The event stream to the tab survives being cut: tunnels in between end long requ
 preview does every minute), so a dropped stream keeps its tab and pending requests for 5 s; on
 reconnect the pending requests are sent again (the picker ignores ids it has seen). A tab that
 unloads says so and stops receiving requests at once.
+
+## Ruler mode
+
+The pane's ruler button (or `R`, in the pane or the app) turns on ruler mode, like Figma's
+Dev Mode or the browser's inspect overlay:
+
+- hovering an element outlines it with its `W × H`, and its padding and margin as tinted
+  bands with their values;
+- a click selects element A; hovering another element B draws red distance lines with px
+  labels between their nearest edges, horizontally and vertically (or the insets when one
+  overlaps the other);
+- when edges or centres of A and B line up within 0.5 px a magenta guide shows it; when they
+  are 1–3 px off, the near miss is flagged in amber with its offset;
+- the pane's grid select draws a 4, 8 or 16 px grid over the app; rulers along the top and left
+  edges show the cursor position;
+- clicking B completes the measurement: the comment that lands in the composer carries a
+  `measure (ruler):` block with both elements, their source `file:line`, the distances and the
+  alignment deltas. `Esc` drops A, then leaves ruler mode.
+
+Ruler and pick mode exclude each other. The overlays live in the picker's own layer, so
+`look dom` and `look shot` never see them.
 
 ## Navigating and pointing: `yubi go`, `yubi show`
 
@@ -230,6 +257,7 @@ Parent → app:
 | `pins:set`   | `pins: { id, selector }[]` |
 | `look:allow` | `allowed: boolean` (the consent switch) |
 | `show:focus` | `id: number` (scroll back to highlight #id) |
+| `ruler:set`  | `on: boolean`, `grid?: number` (grid size in px, 0 for none) |
 
 App → parent:
 
@@ -238,7 +266,8 @@ App → parent:
 | `route`         | `route: string`                                 |
 | `pick:state`    | `picking: boolean`                              |
 | `pick:hover`    | `target: Target \| null`                        |
-| `pick:selected` | `targets: Target[]`, `route`, `viewport`        |
+| `pick:selected` | `targets: Target[]`, `route`, `viewport`, `measure?: { a: Rect, b: Rect }` (ruler mode: targets are A and B) |
+| `ruler:state`   | `on: boolean`                                   |
 | `pick:cancel`   |                                                 |
 | `pin:open`      | `id: number`                                    |
 | `look:served`   | `kind: string`, `selector?: string`             |

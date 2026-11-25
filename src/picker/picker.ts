@@ -3,12 +3,15 @@ import { HMR_EVENT } from './hmr-watch.ts';
 import { describe, label } from './inspect.ts';
 import { createLookClient, type LookClient, type LookHandler, lookPage } from './look.ts';
 import { lookDom } from './look-dom.ts';
+import { lookMeasure } from './look-measure.ts';
 import { lookShot } from './look-shot.ts';
 import { lookStyles } from './look-styles.ts';
+import { rectOf } from './measure.ts';
 import {
 	type ChildMessage,
 	type Frame,
 	isParentMessage,
+	type MeasurePair,
 	type ParentMessage,
 	type Pin,
 	type Target,
@@ -16,10 +19,11 @@ import {
 	type Viewport,
 	YUBI,
 } from './protocol.ts';
+import { createRuler } from './ruler.ts';
 import { createShow, type Show } from './show.ts';
 
 export { isChildMessage, isParentMessage, YUBI } from './protocol.ts';
-export type { ChildMessage, Frame, ParentMessage, Pin, Target, Unmarked, Viewport };
+export type { ChildMessage, Frame, MeasurePair, ParentMessage, Pin, Target, Unmarked, Viewport };
 
 export type PickerOptions = {
 	/**
@@ -43,7 +47,10 @@ export type PickerHandle = {
 	stop(): void;
 	clear(id?: number): void;
 	setPins(pins: Pin[]): void;
+	/** Ruler mode on or off, with a grid of `grid` px (0: none; absent: unchanged). */
+	setRuler(on: boolean, grid?: number): void;
 	readonly picking: boolean;
+	readonly ruler: boolean;
 	readonly lookAllowed: boolean;
 	readonly selection: readonly Target[];
 	destroy(): void;
@@ -102,6 +109,7 @@ export function createPicker(options: PickerOptions): PickerHandle {
 	let raf = 0;
 	let look: LookClient | null = null;
 	let show: Show | null = null;
+	const ruler = createRuler({ doc, win });
 
 	const send = (message: Unmarked<ChildMessage>) => {
 		const data = { ...message, yubi: YUBI };
@@ -122,6 +130,7 @@ export function createPicker(options: PickerOptions): PickerHandle {
 				page: lookPage,
 				dom: lookDom,
 				styles: lookStyles,
+				measure: lookMeasure,
 				shot: lookShot,
 				go: createGo((from, to) => send({ type: 'agent:navigated', from, to })),
 				show: show.handler,
@@ -143,12 +152,28 @@ export function createPicker(options: PickerOptions): PickerHandle {
 	const elementAt = (x: number, y: number): Element | null =>
 		doc.elementsFromPoint(x, y).find((el) => !root.contains(el)) ?? null;
 
+	const syncGlass = () => {
+		glass.style.display = picking || ruler.on ? 'block' : 'none';
+	};
+
 	function setPicking(on: boolean) {
 		if (picking === on) return;
+		if (on && ruler.on) setRuler(false);
 		picking = on;
-		glass.style.display = on ? 'block' : 'none';
+		syncGlass();
 		if (!on) setHover(null);
 		send({ type: 'pick:state', picking });
+	}
+
+	function setRuler(on: boolean, grid?: number) {
+		if (ruler.on === on) {
+			ruler.set(on, grid);
+			return;
+		}
+		if (on && picking) setPicking(false);
+		ruler.set(on, grid);
+		syncGlass();
+		send({ type: 'ruler:state', on });
 	}
 
 	function setHover(el: Element | null) {
@@ -157,14 +182,28 @@ export function createPicker(options: PickerOptions): PickerHandle {
 		send({ type: 'pick:hover', target: hover?.info ?? null });
 	}
 
-	function setSelection(next: Picked[]) {
+	function setSelection(next: Picked[], measure?: MeasurePair) {
 		selection = next;
-		send({
+		const message: Unmarked<Extract<ChildMessage, { type: 'pick:selected' }>> = {
 			type: 'pick:selected',
 			targets: selection.map((s) => s.info),
 			route: routeOf(win),
 			viewport: viewport(),
-		});
+		};
+		if (measure) message.measure = measure;
+		send(message);
+	}
+
+	function measureClick(el: Element) {
+		const pair = ruler.click(el);
+		if (!pair) return;
+		setSelection(
+			[
+				{ el: pair.a, info: describe(pair.a) },
+				{ el: pair.b, info: describe(pair.b) },
+			],
+			{ a: rectOf(pair.a.getBoundingClientRect()), b: rectOf(pair.b.getBoundingClientRect()) },
+		);
 	}
 
 	function pick(el: Element, additive: boolean) {
@@ -180,7 +219,9 @@ export function createPicker(options: PickerOptions): PickerHandle {
 	}
 
 	function back() {
-		if (picking) setPicking(false);
+		if (ruler.on) {
+			if (!ruler.drop()) setRuler(false);
+		} else if (picking) setPicking(false);
 		else if (selection.length) setSelection([]);
 		else send({ type: 'pick:cancel' });
 	}
@@ -188,9 +229,13 @@ export function createPicker(options: PickerOptions): PickerHandle {
 	function onKey(e: KeyboardEvent) {
 		if (e.key === 'Escape') return back();
 		const typing = (e.target as Element | null)?.closest?.(TYPING);
-		if (!typing && (e.key === 'c' || e.key === 'C') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+		if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+		if (e.key === 'c' || e.key === 'C') {
 			e.preventDefault();
 			setPicking(!picking);
+		} else if (e.key === 'r' || e.key === 'R') {
+			e.preventDefault();
+			setRuler(!ruler.on);
 		}
 	}
 
@@ -216,6 +261,7 @@ export function createPicker(options: PickerOptions): PickerHandle {
 		else if (msg.type === 'pick:clear') clear(msg.id);
 		else if (msg.type === 'look:allow') look?.setAllowed(msg.allowed);
 		else if (msg.type === 'show:focus') show?.focus(msg.id);
+		else if (msg.type === 'ruler:set') setRuler(msg.on, msg.grid);
 		else setPins(msg.pins);
 	}
 
@@ -289,6 +335,10 @@ export function createPicker(options: PickerOptions): PickerHandle {
 
 	function draw() {
 		const layers: HTMLElement[] = [];
+		if (ruler.on) {
+			ruler.render();
+			layers.push(ruler.layer);
+		}
 		if (picking && hover?.el.isConnected && !selection.some((s) => s.el === hover?.el)) {
 			layers.push(box('hover', hover.el.getBoundingClientRect(), 'hover', label(hover.info)));
 		}
@@ -309,11 +359,20 @@ export function createPicker(options: PickerOptions): PickerHandle {
 		raf = win.requestAnimationFrame(draw);
 	}
 
-	const onMove = (e: MouseEvent) => setHover(elementAt(e.clientX, e.clientY));
-	const onLeave = () => setHover(null);
+	const onMove = (e: MouseEvent) => {
+		const el = elementAt(e.clientX, e.clientY);
+		if (ruler.on) ruler.move(e.clientX, e.clientY, el);
+		else setHover(el);
+	};
+	const onLeave = () => {
+		ruler.leave();
+		setHover(null);
+	};
 	const onClick = (e: MouseEvent) => {
 		const el = elementAt(e.clientX, e.clientY);
-		if (el) pick(el, e.shiftKey || e.metaKey || e.ctrlKey);
+		if (!el) return;
+		if (ruler.on) measureClick(el);
+		else pick(el, e.shiftKey || e.metaKey || e.ctrlKey);
 	};
 	const syncRoute = () => {
 		const next = routeOf(win);
@@ -339,8 +398,12 @@ export function createPicker(options: PickerOptions): PickerHandle {
 		stop: () => setPicking(false),
 		clear,
 		setPins,
+		setRuler,
 		get picking() {
 			return picking;
+		},
+		get ruler() {
+			return ruler.on;
 		},
 		get lookAllowed() {
 			return look?.allowed ?? false;

@@ -4,6 +4,8 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, test } from 'node:test';
 import { type Browser, chromium, type Frame, type Page } from 'playwright';
+import { formatContextBlock } from '../cctui-plugin/src/context.logic.ts';
+import { measure } from '../src/picker/measure.ts';
 import type { ChildMessage, ParentMessage, Unmarked } from '../src/picker/protocol.ts';
 
 const DIST = new URL('../dist/picker/', import.meta.url);
@@ -278,4 +280,113 @@ test('pins follow the given selectors, open their thread on click, and stick to 
 
 	await send({ type: 'pins:set', pins: [] });
 	await app.waitForFunction(() => !document.querySelector('[data-yubi="pin"]'));
+});
+
+const ruler = (kind: string, attrs = '') => app.locator(`[data-yubi="${kind}"]${attrs}`);
+const rulerText = async (kind: string, attrs = '') =>
+	(await ruler(kind, attrs).first().textContent())?.trim();
+
+test('ruler mode: hover shows size and box bands, a selected box shows distances, guides and near misses', async () => {
+	let before = await count();
+	await send({ type: 'ruler:set', on: true });
+	assert.deepEqual(await next('ruler:state', before), { yubi: 1, type: 'ruler:state', on: true });
+	await glass().waitFor({ state: 'visible' });
+	assert.equal(await picking(), false);
+
+	await page.mouse.move(...(await center('#ruler-a')));
+	await ruler('ruler-hover').waitFor();
+	assert.equal(await rulerText('ruler-size'), '100 × 40');
+	assert.equal(await ruler('ruler-padding', '[data-side="left"]').getAttribute('data-value'), '8');
+	assert.equal(await ruler('ruler-padding', '[data-side="top"]').getAttribute('data-value'), '4');
+	assert.equal(await rulerText('ruler-cursor'), '650, 120');
+	await ruler('ruler-top').waitFor();
+	await ruler('ruler-left').waitFor();
+
+	await page.mouse.move(...(await center('#ruler-c')));
+	await ruler('ruler-margin', '[data-side="top"][data-value="5"]').waitFor();
+	assert.equal(await rulerText('ruler-size'), '60 × 30');
+
+	await page.mouse.click(...(await center('#ruler-a')));
+	await ruler('ruler-anchor').waitFor();
+	await page.mouse.move(...(await center('#ruler-b')));
+	await ruler('ruler-distance', '[data-axis="x"]').waitFor();
+	assert.equal(await ruler('ruler-distance', '[data-axis="x"]').getAttribute('data-value'), '24');
+	assert.equal(await rulerText('ruler-distance', '[data-axis="x"]'), '24');
+	await ruler('ruler-guide', '[data-edge="centre-y"]').waitFor();
+	assert.equal(await ruler('ruler-near').count(), 0, 'nothing is nearly aligned with B');
+	await shot('ruler-distance');
+
+	await page.mouse.move(...(await center('#ruler-c')));
+	await ruler('ruler-near', '[data-edge="centre-x"]').waitFor();
+	assert.equal(await rulerText('ruler-near', '[data-edge="centre-x"]'), '2px off');
+	assert.equal(await ruler('ruler-distance', '[data-axis="y"]').getAttribute('data-value'), '40');
+	assert.equal(await ruler('ruler-guide').count(), 0);
+	await shot('ruler-near-miss');
+
+	assert.equal(
+		await app.evaluate(() => {
+			const root = document.querySelector('[data-yubi="root"]') as Element;
+			const nodes = [...document.querySelectorAll('[data-yubi^="ruler"]')];
+			return nodes.length > 0 && nodes.every((n) => root.contains(n));
+		}),
+		true,
+		'every ruler overlay lives in the picker root',
+	);
+
+	before = await count();
+	await page.mouse.click(...(await center('#ruler-c')));
+	const selected = await next('pick:selected', before);
+	assert.ok(selected?.measure, 'the selection carries the measurement');
+	assert.deepEqual(
+		selected.targets.map((t) => t.selector),
+		['#ruler-a', '#ruler-c'],
+	);
+	assert.deepEqual(selected.measure, {
+		a: { x: 600, y: 100, width: 100, height: 40 },
+		b: { x: 618, y: 180, width: 60, height: 30 },
+	});
+	const m = measure(selected.measure.a, selected.measure.b);
+	assert.equal(m.vertical.gap, 40);
+	assert.deepEqual(
+		m.alignments.map((al) => [al.edge, al.delta, al.status]),
+		[['centre-x', -2, 'near']],
+	);
+	const block = formatContextBlock(selected, 1).split('\n');
+	assert.ok(block.includes('measure (ruler):'), block.join('\n'));
+	assert.ok(block.includes('  vertical: 40px gap (A bottom → B top)'), block.join('\n'));
+	assert.ok(block.includes('  near miss: centre x A=650 B=648 (2px off)'), block.join('\n'));
+	assert.equal(await ruler('ruler-anchor').count(), 0, 'a finished measurement drops A');
+	await send({ type: 'pick:clear', id: 9 });
+});
+
+test('R toggles the ruler, the grid follows ruler:set, and picking turns the ruler off', async () => {
+	let before = await count();
+	await page.keyboard.press('r');
+	assert.deepEqual(await next('ruler:state', before), { yubi: 1, type: 'ruler:state', on: false });
+	await expectHidden();
+	assert.equal(await ruler('ruler-top').count(), 0);
+
+	before = await count();
+	await page.keyboard.press('R');
+	assert.deepEqual(await next('ruler:state', before), { yubi: 1, type: 'ruler:state', on: true });
+	await send({ type: 'ruler:set', on: true, grid: 8 });
+	await ruler('ruler-grid', '[data-size="8"]').waitFor();
+
+	await page.mouse.click(...(await center('#ruler-a')));
+	await ruler('ruler-anchor').waitFor();
+	await page.keyboard.press('Escape');
+	await app.waitForFunction(() => !document.querySelector('[data-yubi="ruler-anchor"]'));
+	assert.equal(
+		await app.evaluate(() => (window as unknown as { picker: { ruler: boolean } }).picker.ruler),
+		true,
+		'Escape drops A first',
+	);
+
+	before = await count();
+	await send({ type: 'pick:start' });
+	assert.deepEqual(await next('ruler:state', before), { yubi: 1, type: 'ruler:state', on: false });
+	assert.equal(await picking(), true);
+	await app.waitForFunction(() => !document.querySelector('[data-yubi="ruler-grid"]'));
+	await send({ type: 'pick:stop' });
+	await expectHidden();
 });

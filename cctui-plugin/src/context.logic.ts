@@ -1,3 +1,4 @@
+import { formatMeasurement, measure } from '../../src/picker/measure.ts';
 import type { Frame, Selected, Target } from './protocol.ts';
 
 const MAX_TEXT = 80;
@@ -30,14 +31,27 @@ function targetLines(t: Target): string[] {
 	return lines;
 }
 
+const short = (t: Target) =>
+	`<${t.tag}>${t.source ? ` ${loc({ file: t.source.file, line: t.source.line })}` : ` ${t.selector}`}`;
+
+function measureLines(sel: Pick<Selected, 'targets' | 'measure'>): string[] {
+	const [a, b] = sel.targets;
+	if (!sel.measure || !a || !b) return [];
+	const m = measure(sel.measure.a, sel.measure.b);
+	return [
+		'measure (ruler):',
+		...formatMeasurement(m, { a: short(a), b: short(b) }).map(oneLine),
+	].map((l, i) => (i ? `  ${l}` : l));
+}
+
 /** The plain-text block dropped into the composer for one selection. Element
  *  data is untrusted: it is flattened to one line per field and never rendered
  *  as markup. */
 export function formatContextBlock(
-	sel: Pick<Selected, 'targets' | 'route' | 'viewport'>,
+	sel: Pick<Selected, 'targets' | 'route' | 'viewport' | 'measure'>,
 	pin?: number,
 ): string {
 	const tag = pin === undefined ? '[yubisashi]' : `[yubisashi #${pin}]`;
 	const head = `${tag} on ${sel.route || '/'} (viewport ${sel.viewport.width}x${sel.viewport.height})`;
-	return [head, ...sel.targets.flatMap(targetLines)].join('\n');
+	return [head, ...sel.targets.flatMap(targetLines), ...measureLines(sel)].join('\n');
 }
