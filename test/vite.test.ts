@@ -180,6 +180,9 @@ describe('sveltekit', () => {
 			await createServer({
 				root: KIT_ROOT,
 				configFile: false,
+				cacheDir: fileURLToPath(
+					new URL('./fixture-kit/node_modules/.vite-plugin/', import.meta.url),
+				),
 				logLevel: 'silent',
 				plugins: [sveltekit(), yubisashi({ parentOrigin: harnessOrigin })],
 				server: { host: '127.0.0.1', port: 0 },
