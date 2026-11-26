@@ -1,3 +1,5 @@
+<img src="docs/assets/icon.svg" width="64" height="64" alt="">
+
 # yubisashi 指差し
 
 Point at elements of your running app from a review panel and hand the coding agent the exact
